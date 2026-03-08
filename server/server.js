@@ -18,9 +18,9 @@ function isValidSessionId(id) {
     return typeof id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(id);
 }
 
-// Sanitize filename (no path traversal)
-function sanitizeFilename(name) {
-    return path.basename(name);
+// File ID validation (alphanumeric, 8-16 chars)
+function isValidFileId(id) {
+    return typeof id === 'string' && /^[a-zA-Z0-9]{8,16}$/.test(id);
 }
 
 // --- Static file serving with COOP/COEP headers ---
@@ -37,18 +37,19 @@ app.get('/', (req, res) => {
 });
 
 // --- File upload ---
-app.post('/api/sessions/:sessionId/files/:filename', (req, res) => {
-    const { sessionId, filename } = req.params;
+app.post('/api/sessions/:sessionId/files/:fileId', (req, res) => {
+    const { sessionId, fileId } = req.params;
     if (!isValidSessionId(sessionId)) return res.status(400).send('Invalid session ID');
+    if (!isValidFileId(fileId)) return res.status(400).send('Invalid file ID');
 
-    const safeName = sanitizeFilename(filename);
-    if (!safeName) return res.status(400).send('Invalid filename');
+    const filename = req.query.filename || fileId;
 
     const sessionDir = path.join(SESSIONS_DIR, sessionId);
     fs.mkdirSync(sessionDir, { recursive: true });
 
-    const tmpPath = path.join(sessionDir, safeName + '.tmp.' + crypto.randomBytes(4).toString('hex'));
-    const finalPath = path.join(sessionDir, safeName);
+    const tmpPath = path.join(sessionDir, fileId + '.tmp.' + crypto.randomBytes(4).toString('hex'));
+    const finalPath = path.join(sessionDir, fileId);
+    const metaPath = path.join(sessionDir, fileId + '.meta.json');
 
     const chunks = [];
     req.on('data', chunk => chunks.push(chunk));
@@ -57,6 +58,7 @@ app.post('/api/sessions/:sessionId/files/:filename', (req, res) => {
         try {
             fs.writeFileSync(tmpPath, buf);
             fs.renameSync(tmpPath, finalPath);
+            fs.writeFileSync(metaPath, JSON.stringify({ filename, size: buf.length }));
             res.status(200).send('OK');
         } catch (err) {
             try { fs.unlinkSync(tmpPath); } catch (_) {}
@@ -70,14 +72,12 @@ app.post('/api/sessions/:sessionId/files/:filename', (req, res) => {
 });
 
 // --- File download ---
-app.get('/api/sessions/:sessionId/files/:filename', (req, res) => {
-    const { sessionId, filename } = req.params;
+app.get('/api/sessions/:sessionId/files/:fileId', (req, res) => {
+    const { sessionId, fileId } = req.params;
     if (!isValidSessionId(sessionId)) return res.status(400).send('Invalid session ID');
+    if (!isValidFileId(fileId)) return res.status(400).send('Invalid file ID');
 
-    const safeName = sanitizeFilename(filename);
-    if (!safeName) return res.status(400).send('Invalid filename');
-
-    const filePath = path.join(SESSIONS_DIR, sessionId, safeName);
+    const filePath = path.join(SESSIONS_DIR, sessionId, fileId);
     if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
 
     const stat = fs.statSync(filePath);
@@ -87,17 +87,14 @@ app.get('/api/sessions/:sessionId/files/:filename', (req, res) => {
 });
 
 // --- File delete ---
-app.delete('/api/sessions/:sessionId/files/:filename', (req, res) => {
-    const { sessionId, filename } = req.params;
+app.delete('/api/sessions/:sessionId/files/:fileId', (req, res) => {
+    const { sessionId, fileId } = req.params;
     if (!isValidSessionId(sessionId)) return res.status(400).send('Invalid session ID');
+    if (!isValidFileId(fileId)) return res.status(400).send('Invalid file ID');
 
-    const safeName = sanitizeFilename(filename);
-    if (!safeName) return res.status(400).send('Invalid filename');
-
-    const filePath = path.join(SESSIONS_DIR, sessionId, safeName);
-    try {
-        fs.unlinkSync(filePath);
-    } catch (_) {}
+    const sessionDir = path.join(SESSIONS_DIR, sessionId);
+    try { fs.unlinkSync(path.join(sessionDir, fileId)); } catch (_) {}
+    try { fs.unlinkSync(path.join(sessionDir, fileId + '.meta.json')); } catch (_) {}
     res.status(200).send('OK');
 });
 
@@ -122,11 +119,15 @@ wss.on('connection', (ws) => {
             const files = [];
             if (fs.existsSync(sessionDir)) {
                 for (const name of fs.readdirSync(sessionDir)) {
-                    // Skip temp files
+                    if (!name.endsWith('.meta.json')) continue;
                     if (name.includes('.tmp.')) continue;
                     try {
-                        const stat = fs.statSync(path.join(sessionDir, name));
-                        files.push({ filename: name, size: stat.size });
+                        const meta = JSON.parse(fs.readFileSync(path.join(sessionDir, name), 'utf8'));
+                        const id = name.slice(0, -'.meta.json'.length);
+                        const dataPath = path.join(sessionDir, id);
+                        if (fs.existsSync(dataPath)) {
+                            files.push({ id, filename: meta.filename, size: meta.size });
+                        }
                     } catch (_) {}
                 }
             }
@@ -137,6 +138,7 @@ wss.on('connection', (ws) => {
             if (!peers) return;
             const broadcast = JSON.stringify({
                 type: 'file_available',
+                id: msg.id,
                 filename: msg.filename,
                 size: msg.size,
             });
@@ -151,7 +153,7 @@ wss.on('connection', (ws) => {
             if (!peers) return;
             const broadcast = JSON.stringify({
                 type: 'file_removed',
-                filename: msg.filename,
+                id: msg.id,
             });
             for (const peer of peers) {
                 if (peer !== ws && peer.readyState === 1) {

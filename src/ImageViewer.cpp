@@ -1519,7 +1519,7 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
 
 #ifdef __EMSCRIPTEN__
     // Apply any pending transfer progress from before this button existed
-    auto pendingIt = mPendingTransfers.find(image->path().filename().string());
+    auto pendingIt = mPendingTransfers.find(toString(image->path()));
     if (pendingIt != mPendingTransfers.end()) {
         button->setTransferProgress(pendingIt->second.progress, pendingIt->second.isUpload);
         mPendingTransfers.erase(pendingIt);
@@ -1600,12 +1600,12 @@ void ImageViewer::removeImage(shared_ptr<Image> image) {
 
 #ifdef __EMSCRIPTEN__
     if (!mSuppressRemovalNotification) {
-        const auto filename = image->path().filename().string();
+        const auto pathStr = toString(image->path());
         EM_ASM({
             if (window.tevOnImageRemoved) {
                 window.tevOnImageRemoved(UTF8ToString($0));
             }
-        }, filename.c_str());
+        }, pathStr.c_str());
     }
 #endif
 
@@ -1831,12 +1831,12 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 #ifdef __EMSCRIPTEN__
     // Notify JavaScript of selection change for download prioritization
     {
-        const auto filename = mCurrentImage->path().filename().string();
+        const auto pathStr = toString(mCurrentImage->path());
         EM_ASM({
             if (window.tevOnImageSelected) {
                 window.tevOnImageSelected(UTF8ToString($0));
             }
-        }, filename.c_str());
+        }, pathStr.c_str());
     }
 #endif
 
@@ -3029,27 +3029,26 @@ void ImageViewer::updateCurrentMonitorSize() {
 }
 
 #ifdef __EMSCRIPTEN__
-void ImageViewer::setTransferProgress(string_view filename, float progress, bool isUpload) {
-    // Find image whose VFS path ends with the given filename
+void ImageViewer::setTransferProgress(string_view vfsPath, float progress, bool isUpload) {
     auto& buttons = mImageButtonContainer->children();
     for (size_t i = 0; i < mImages.size() && i < buttons.size(); ++i) {
-        if (mImages[i]->path().filename() == filename) {
+        if (toString(mImages[i]->path()) == vfsPath) {
             dynamic_cast<ImageButton*>(buttons[i])->setTransferProgress(progress, isUpload);
             redraw();
             return;
         }
     }
     // Image button doesn't exist yet (e.g. download in progress); store for later
-    mPendingTransfers[string(filename)] = {progress, isUpload};
+    mPendingTransfers[string(vfsPath)] = {progress, isUpload};
     redraw();
 }
 
-void ImageViewer::clearTransferProgress(string_view filename) {
-    mPendingTransfers.erase(string(filename));
+void ImageViewer::clearTransferProgress(string_view vfsPath) {
+    mPendingTransfers.erase(string(vfsPath));
 
     auto& buttons = mImageButtonContainer->children();
     for (size_t i = 0; i < mImages.size() && i < buttons.size(); ++i) {
-        if (mImages[i]->path().filename() == filename) {
+        if (toString(mImages[i]->path()) == vfsPath) {
             dynamic_cast<ImageButton*>(buttons[i])->clearTransferProgress();
             redraw();
             return;

@@ -89,11 +89,16 @@ string toString(const fs::path& path) {
 
 string toDisplayString(const fs::path& path) {
 #if defined(__EMSCRIPTEN__)
-    // Emscripten GLFW writes dropped files to /.glfw_dropped_files/<name>; strip that prefix for display.
+    // Emscripten VFS paths look like /.glfw_dropped_files/{id}/{filename}; strip prefix and ID subdirectory.
     string s = toString(path);
     const string_view prefix = "/.glfw_dropped_files/";
     if (s.starts_with(prefix)) {
-        return s.substr(prefix.size());
+        string remainder = s.substr(prefix.size());
+        auto slashPos = remainder.find('/');
+        if (slashPos != string::npos) {
+            return remainder.substr(slashPos + 1);
+        }
+        return remainder;
     }
     return s;
 #elif !defined(__APPLE__) and !defined(_WIN32)

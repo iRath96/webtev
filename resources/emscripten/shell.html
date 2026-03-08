@@ -65,6 +65,16 @@
             });
         })();
 
+        /* ── Helpers ─────────────────────────────────────────── */
+        function generateFileId() {
+            var chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+            var id = '';
+            for (var i = 0; i < 10; i++) {
+                id += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return id;
+        }
+
         /* ── Emscripten Module setup ──────────────────────────── */
         var Module = {
             canvas: (function() { return document.getElementById('canvas'); })(),
@@ -98,9 +108,11 @@
             downloadQueue: [],
             activeUploads: 0,
             activeDownloads: 0,
-            activeDownloadFilenames: new Set(),
-            selectedImage: null,
-            knownFiles: new Set(),
+            activeDownloadIds: new Set(),
+            selectedFileId: null,
+            knownFileIds: new Set(),
+            fileIdToVfsPath: {},
+            vfsPathToFileId: {},
             MAX_CONCURRENT: 2,
             reconnectDelay: 1000,
 
@@ -123,27 +135,30 @@
 
                     if (msg.type === 'session_files') {
                         msg.files.forEach(function(f) {
-                            if (!self.knownFiles.has(f.filename)) {
-                                self.downloadQueue.push({ filename: f.filename, size: f.size });
+                            if (!self.knownFileIds.has(f.id)) {
+                                self.downloadQueue.push({ id: f.id, filename: f.filename, size: f.size });
                             }
                         });
                         self.processDownloadQueue();
                     } else if (msg.type === 'file_available') {
-                        if (!self.knownFiles.has(msg.filename)) {
-                            self.downloadQueue.push({ filename: msg.filename, size: msg.size });
+                        if (!self.knownFileIds.has(msg.id)) {
+                            self.downloadQueue.push({ id: msg.id, filename: msg.filename, size: msg.size });
                             self.processDownloadQueue();
                         }
                     } else if (msg.type === 'file_removed') {
-                        self.knownFiles.delete(msg.filename);
+                        self.knownFileIds.delete(msg.id);
                         /* Remove from download queue if pending */
                         self.downloadQueue = self.downloadQueue.filter(function(item) {
-                            return item.filename !== msg.filename;
+                            return item.id !== msg.id;
                         });
-                        /* Tell C++ to close the image */
-                        var vfsPath = '/.glfw_dropped_files/' + msg.filename;
-                        Module.ccall('tev_remove_image', null, ['string'], [vfsPath]);
-                        /* Clean up VFS */
-                        try { FS.unlink(vfsPath); } catch (_) {}
+                        /* Tell C++ to close the image and clean up VFS */
+                        var vfsPath = self.fileIdToVfsPath[msg.id];
+                        if (vfsPath) {
+                            Module.ccall('tev_remove_image', null, ['string'], [vfsPath]);
+                            try { FS.unlink(vfsPath); } catch (_) {}
+                            delete self.vfsPathToFileId[vfsPath];
+                            delete self.fileIdToVfsPath[msg.id];
+                        }
                     }
                 };
 
@@ -159,9 +174,11 @@
                 };
             },
 
-            enqueueUpload: function(filename, data) {
-                this.knownFiles.add(filename);
-                this.uploadQueue.push({ filename: filename, data: data });
+            enqueueUpload: function(id, filename, vfsPath, data) {
+                this.knownFileIds.add(id);
+                this.fileIdToVfsPath[id] = vfsPath;
+                this.vfsPathToFileId[vfsPath] = id;
+                this.uploadQueue.push({ id: id, filename: filename, vfsPath: vfsPath, data: data });
                 this.processUploadQueue();
             },
 
@@ -177,7 +194,8 @@
                 var self = this;
                 var xhr = new XMLHttpRequest();
                 var url = '/api/sessions/' + encodeURIComponent(self.sessionId) +
-                          '/files/' + encodeURIComponent(item.filename);
+                          '/files/' + encodeURIComponent(item.id) +
+                          '?filename=' + encodeURIComponent(item.filename);
                 xhr.open('POST', url);
                 xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
@@ -186,18 +204,19 @@
                         var pct = Math.round((e.loaded / e.total) * 100);
                         Module.ccall('tev_set_transfer_progress', null,
                             ['string', 'number', 'number'],
-                            [item.filename, pct, 1]);
+                            [item.vfsPath, pct, 1]);
                     }
                 };
 
                 xhr.onload = function() {
                     Module.ccall('tev_clear_transfer_progress', null,
-                        ['string'], [item.filename]);
+                        ['string'], [item.vfsPath]);
                     self.activeUploads--;
 
                     if (xhr.status === 200 && self.ws && self.ws.readyState === 1) {
                         self.ws.send(JSON.stringify({
                             type: 'file_available',
+                            id: item.id,
                             filename: item.filename,
                             size: item.data.byteLength
                         }));
@@ -208,7 +227,7 @@
 
                 xhr.onerror = function() {
                     Module.ccall('tev_clear_transfer_progress', null,
-                        ['string'], [item.filename]);
+                        ['string'], [item.vfsPath]);
                     self.activeUploads--;
                     self.uploadQueue.push(item);
                     setTimeout(function() { self.processUploadQueue(); }, 3000);
@@ -219,10 +238,10 @@
 
             processDownloadQueue: function() {
                 // Sort: currently-selected image first
-                if (this.selectedImage) {
-                    var sel = this.selectedImage;
+                if (this.selectedFileId) {
+                    var sel = this.selectedFileId;
                     this.downloadQueue.sort(function(a, b) {
-                        return (a.filename === sel ? 0 : 1) - (b.filename === sel ? 0 : 1);
+                        return (a.id === sel ? 0 : 1) - (b.id === sel ? 0 : 1);
                     });
                 }
 
@@ -230,7 +249,7 @@
                     // Skip items already being downloaded
                     var idx = -1;
                     for (var i = 0; i < this.downloadQueue.length; i++) {
-                        if (!this.activeDownloadFilenames.has(this.downloadQueue[i].filename)) {
+                        if (!this.activeDownloadIds.has(this.downloadQueue[i].id)) {
                             idx = i;
                             break;
                         }
@@ -239,7 +258,7 @@
 
                     var item = this.downloadQueue.splice(idx, 1)[0];
                     this.activeDownloads++;
-                    this.activeDownloadFilenames.add(item.filename);
+                    this.activeDownloadIds.add(item.id);
                     this.downloadFile(item);
                 }
             },
@@ -248,38 +267,43 @@
                 var self = this;
                 var xhr = new XMLHttpRequest();
                 var url = '/api/sessions/' + encodeURIComponent(self.sessionId) +
-                          '/files/' + encodeURIComponent(item.filename);
+                          '/files/' + encodeURIComponent(item.id);
                 xhr.open('GET', url);
                 xhr.responseType = 'arraybuffer';
+
+                var vfsDir = '/.glfw_dropped_files/' + item.id;
+                var vfsPath = vfsDir + '/' + item.filename;
 
                 xhr.onprogress = function(e) {
                     if (e.lengthComputable) {
                         var pct = Math.round((e.loaded / e.total) * 100);
                         Module.ccall('tev_set_transfer_progress', null,
                             ['string', 'number', 'number'],
-                            [item.filename, pct, 0]);
+                            [vfsPath, pct, 0]);
                     }
                 };
 
                 xhr.onload = function() {
                     self.activeDownloads--;
-                    self.activeDownloadFilenames.delete(item.filename);
+                    self.activeDownloadIds.delete(item.id);
 
                     if (xhr.status === 200) {
-                        var vfsPath = '/.glfw_dropped_files/' + item.filename;
                         FS.createPath('/', '.glfw_dropped_files');
+                        FS.createPath('/.glfw_dropped_files', item.id);
                         FS.writeFile(vfsPath, new Uint8Array(xhr.response));
-                        self.knownFiles.add(item.filename);
+                        self.knownFileIds.add(item.id);
+                        self.fileIdToVfsPath[item.id] = vfsPath;
+                        self.vfsPathToFileId[vfsPath] = item.id;
 
                         Module.ccall('tev_drop_files', null, ['string'], [vfsPath]);
                         // Clear progress shortly after — give C++ time to create the button
                         setTimeout(function() {
                             Module.ccall('tev_clear_transfer_progress', null,
-                                ['string'], [item.filename]);
+                                ['string'], [vfsPath]);
                         }, 500);
                     } else {
                         Module.ccall('tev_clear_transfer_progress', null,
-                            ['string'], [item.filename]);
+                            ['string'], [vfsPath]);
                     }
 
                     self.processDownloadQueue();
@@ -287,9 +311,9 @@
 
                 xhr.onerror = function() {
                     Module.ccall('tev_clear_transfer_progress', null,
-                        ['string'], [item.filename]);
+                        ['string'], [vfsPath]);
                     self.activeDownloads--;
-                    self.activeDownloadFilenames.delete(item.filename);
+                    self.activeDownloadIds.delete(item.id);
                     self.downloadQueue.push(item);
                     setTimeout(function() { self.processDownloadQueue(); }, 3000);
                 };
@@ -298,20 +322,25 @@
             }
         };
 
-        /* Called from C++ EM_ASM when the selected image changes */
-        window.tevOnImageSelected = function(filename) {
-            TevSync.selectedImage = filename;
+        /* Called from C++ EM_ASM when the selected image changes (receives full VFS path) */
+        window.tevOnImageSelected = function(vfsPath) {
+            var id = TevSync.vfsPathToFileId[vfsPath];
+            TevSync.selectedFileId = id || null;
             TevSync.processDownloadQueue();
         };
 
-        /* Called from C++ EM_ASM when an image is closed/removed */
-        window.tevOnImageRemoved = function(filename) {
-            TevSync.knownFiles.delete(filename);
+        /* Called from C++ EM_ASM when an image is closed/removed (receives full VFS path) */
+        window.tevOnImageRemoved = function(vfsPath) {
+            var id = TevSync.vfsPathToFileId[vfsPath];
+            if (!id) return; /* Not a synced file */
+            TevSync.knownFileIds.delete(id);
+            delete TevSync.fileIdToVfsPath[id];
+            delete TevSync.vfsPathToFileId[vfsPath];
 
             /* Delete from server */
             var xhr = new XMLHttpRequest();
             var url = '/api/sessions/' + encodeURIComponent(TevSync.sessionId) +
-                      '/files/' + encodeURIComponent(filename);
+                      '/files/' + encodeURIComponent(id);
             xhr.open('DELETE', url);
             xhr.send();
 
@@ -319,7 +348,7 @@
             if (TevSync.ws && TevSync.ws.readyState === 1) {
                 TevSync.ws.send(JSON.stringify({
                     type: 'file_removed',
-                    filename: filename
+                    id: id
                 }));
             }
         };
@@ -331,8 +360,8 @@
         });
 
         /* ── Custom drop handler ──────────────────────────────── */
-        /* Deduplicates filenames and bypasses GLFW's built-in
-           handler (which overwrites same-named files in the VFS). */
+        /* Each dropped file gets a unique ID subdirectory in the VFS,
+           avoiding collisions even for same-named files. */
         (function() {
             var canvas = document.getElementById('canvas');
             var DROP_DIR = '/.glfw_dropped_files';
@@ -348,20 +377,13 @@
                 var files = e.dataTransfer ? e.dataTransfer.files : null;
                 if (!files || !files.length) return;
 
-                /* Deduplicate: append " (2)", " (3)", etc. for colliding names */
-                var nameCount = {};
+                /* Each file gets a unique ID subdirectory */
                 var entries = [];
                 for (var i = 0; i < files.length; i++) {
                     var origName = files[i].name.replace(/\//g, '_');
-                    var name = origName;
-                    if (nameCount[origName]) {
-                        var dot = origName.lastIndexOf('.');
-                        var base = dot >= 0 ? origName.substring(0, dot) : origName;
-                        var ext  = dot >= 0 ? origName.substring(dot) : '';
-                        name = base + ' (' + (nameCount[origName] + 1) + ')' + ext;
-                    }
-                    nameCount[origName] = (nameCount[origName] || 0) + 1;
-                    entries.push({ file: files[i], path: DROP_DIR + '/' + name });
+                    var id = generateFileId();
+                    entries.push({ file: files[i], id: id, filename: origName,
+                                   path: DROP_DIR + '/' + id + '/' + origName });
                 }
 
                 /* Read all files, write to VFS, then call C++ */
@@ -371,6 +393,8 @@
                 FS.createPath('/', '.glfw_dropped_files');
 
                 entries.forEach(function(entry) {
+                    FS.createPath(DROP_DIR, entry.id);
+
                     var reader = new FileReader();
                     reader.onloadend = function() {
                         if (reader.readyState === 2) {
@@ -378,8 +402,7 @@
                             FS.writeFile(entry.path, data);
 
                             /* Enqueue upload to collaboration server */
-                            var uploadName = entry.path.split('/').pop();
-                            TevSync.enqueueUpload(uploadName, reader.result);
+                            TevSync.enqueueUpload(entry.id, entry.filename, entry.path, reader.result);
                         }
                         if (--pending === 0) {
                             Module.ccall('tev_drop_files', null, ['string'], [paths.join('\n')]);
