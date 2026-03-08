@@ -68,6 +68,16 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tev_drop_files(const char* pathsNewlineSepa
         sImageViewer->drop_event(paths);
     }
 }
+
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_set_transfer_progress(const char* filename, int progress, int isUpload) {
+    if (!sImageViewer) return;
+    sImageViewer->setTransferProgress(filename, (float)progress, isUpload != 0);
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_clear_transfer_progress(const char* filename) {
+    if (!sImageViewer) return;
+    sImageViewer->clearTransferProgress(filename);
+}
 #endif
 static atomic<bool> imageViewerIsReady = false;
 

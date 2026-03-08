@@ -217,6 +217,43 @@ void ImageButton::draw(NVGcontext* ctx) {
     nvgTextAlign(ctx, NVG_ALIGN_LEFT | NVG_ALIGN_BOTTOM);
     nvgFillColor(ctx, idColor);
     nvgText(ctx, m_pos.x() + 5, textPos.y(), idString.data(), idString.data() + idString.size());
+
+    // Transfer progress indicator (arrow + percentage)
+    if (mTransferProgress >= 0.0f) {
+        float idEndX = m_pos.x() + 5;
+        nvgFontSize(ctx, m_font_size + 2);
+        nvgFontFace(ctx, "sans-bold");
+        idEndX += nvgTextBounds(ctx, 0, 0, idString.data(), idString.data() + idString.size(), nullptr);
+
+        float arrowX = idEndX + 6;
+        float arrowCenterY = center.y();
+        float arrowSize = (m_font_size - 2) * 0.5f;
+
+        // Triangle arrow: up (green) for upload, down (blue) for download
+        NVGcolor arrowColor = mTransferIsUpload ? nvgRGBA(100, 200, 100, 200) : nvgRGBA(100, 150, 255, 200);
+
+        nvgBeginPath(ctx);
+        if (mTransferIsUpload) {
+            nvgMoveTo(ctx, arrowX, arrowCenterY - arrowSize);
+            nvgLineTo(ctx, arrowX - arrowSize * 0.7f, arrowCenterY + arrowSize * 0.5f);
+            nvgLineTo(ctx, arrowX + arrowSize * 0.7f, arrowCenterY + arrowSize * 0.5f);
+        } else {
+            nvgMoveTo(ctx, arrowX, arrowCenterY + arrowSize);
+            nvgLineTo(ctx, arrowX - arrowSize * 0.7f, arrowCenterY - arrowSize * 0.5f);
+            nvgLineTo(ctx, arrowX + arrowSize * 0.7f, arrowCenterY - arrowSize * 0.5f);
+        }
+        nvgClosePath(ctx);
+        nvgFillColor(ctx, arrowColor);
+        nvgFill(ctx);
+
+        // Percentage text
+        string progressStr = to_string((int)mTransferProgress) + "%";
+        nvgFontSize(ctx, m_font_size - 2);
+        nvgFontFace(ctx, "sans");
+        nvgTextAlign(ctx, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFillColor(ctx, arrowColor);
+        nvgText(ctx, arrowX + arrowSize * 0.7f + 3, arrowCenterY, progressStr.data(), progressStr.data() + progressStr.size());
+    }
 }
 
 void ImageButton::setHighlightRange(size_t begin, size_t end) {

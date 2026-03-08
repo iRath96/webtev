@@ -44,6 +44,10 @@
 #    include <nanogui/metal.h>
 #endif
 
+#ifdef __EMSCRIPTEN__
+#    include <emscripten.h>
+#endif
+
 #include <chrono>
 #include <limits>
 #include <stdexcept>
@@ -1513,6 +1517,15 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
     mImageButtonContainer->add_child((int)index, button);
     mImages.insert(begin(mImages) + index, image);
 
+#ifdef __EMSCRIPTEN__
+    // Apply any pending transfer progress from before this button existed
+    auto pendingIt = mPendingTransfers.find(image->path().filename().string());
+    if (pendingIt != mPendingTransfers.end()) {
+        button->setTransferProgress(pendingIt->second.progress, pendingIt->second.isUpload);
+        mPendingTransfers.erase(pendingIt);
+    }
+#endif
+
     mShouldFooterBeVisible |= image->channelGroups().size() > 1;
     // The following call will make sure the footer becomes visible if the previous line enabled it.
     setUiVisible(isUiVisible());
@@ -1787,6 +1800,18 @@ void ImageViewer::selectImage(const shared_ptr<Image>& image, bool stopPlayback)
 
     mCurrentImage = image;
     mImageCanvas->setImage(mCurrentImage);
+
+#ifdef __EMSCRIPTEN__
+    // Notify JavaScript of selection change for download prioritization
+    {
+        const auto filename = mCurrentImage->path().filename().string();
+        EM_ASM({
+            if (window.tevOnImageSelected) {
+                window.tevOnImageSelected(UTF8ToString($0));
+            }
+        }, filename.c_str());
+    }
+#endif
 
     setImageWhiteLevel(mCurrentImage->whiteLevel());
 
@@ -2975,5 +3000,35 @@ void ImageViewer::updateCurrentMonitorSize() {
     }
 #endif // !__EMSCRIPTEN__
 }
+
+#ifdef __EMSCRIPTEN__
+void ImageViewer::setTransferProgress(string_view filename, float progress, bool isUpload) {
+    // Find image whose VFS path ends with the given filename
+    auto& buttons = mImageButtonContainer->children();
+    for (size_t i = 0; i < mImages.size() && i < buttons.size(); ++i) {
+        if (mImages[i]->path().filename() == filename) {
+            dynamic_cast<ImageButton*>(buttons[i])->setTransferProgress(progress, isUpload);
+            redraw();
+            return;
+        }
+    }
+    // Image button doesn't exist yet (e.g. download in progress); store for later
+    mPendingTransfers[string(filename)] = {progress, isUpload};
+    redraw();
+}
+
+void ImageViewer::clearTransferProgress(string_view filename) {
+    mPendingTransfers.erase(string(filename));
+
+    auto& buttons = mImageButtonContainer->children();
+    for (size_t i = 0; i < mImages.size() && i < buttons.size(); ++i) {
+        if (mImages[i]->path().filename() == filename) {
+            dynamic_cast<ImageButton*>(buttons[i])->clearTransferProgress();
+            redraw();
+            return;
+        }
+    }
+}
+#endif
 
 } // namespace tev

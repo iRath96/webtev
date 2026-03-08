@@ -340,7 +340,7 @@ if (EMSCRIPTEN)
     set_target_properties(tev PROPERTIES SUFFIX ".html")
     target_link_options(tev PRIVATE
         -pthread
-        -sPTHREAD_POOL_SIZE=4
+        -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency+4
         -sALLOW_MEMORY_GROWTH=1
         -sUSE_GLFW=3
         -sMIN_WEBGL_VERSION=2
@@ -348,6 +348,7 @@ if (EMSCRIPTEN)
         -sFORCE_FILESYSTEM=1
         -sINITIAL_MEMORY=256MB
         -sSTACK_SIZE=1MB
+        -sASSERTIONS=1
         -sNO_EXIT_RUNTIME=1
         -sEXPORTED_RUNTIME_METHODS=ccall
         -fexceptions

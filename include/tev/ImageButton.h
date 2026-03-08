@@ -96,6 +96,14 @@ public:
 
     bool textBoxVisible() const { return mCaptionTextBox->visible(); }
 
+    void setTransferProgress(float progress, bool isUpload) {
+        mTransferProgress = progress;
+        mTransferIsUpload = isUpload;
+    }
+
+    void clearTransferProgress() { mTransferProgress = -1.0f; }
+    bool hasActiveTransfer() const { return mTransferProgress >= 0.0f; }
+
 private:
     std::string mCaption;
     nanogui::TextBox* mCaptionTextBox;
@@ -116,6 +124,9 @@ private:
 
     size_t mHighlightBegin = 0;
     size_t mHighlightEnd = 0;
+
+    float mTransferProgress = -1.0f; // -1 = no transfer; 0..100 = percentage
+    bool mTransferIsUpload = false;
 };
 
 } // namespace tev

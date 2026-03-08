@@ -41,6 +41,7 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -185,6 +186,11 @@ public:
 #ifndef __EMSCRIPTEN__
     void openImageDialog();
     void saveImageDialog();
+#endif
+
+#ifdef __EMSCRIPTEN__
+    void setTransferProgress(std::string_view filename, float progress, bool isUpload);
+    void clearTransferProgress(std::string_view filename);
 #endif
 
     void requestLayoutUpdate() { mRequiresLayoutUpdate = true; }
@@ -374,6 +380,14 @@ private:
 
 #ifndef __EMSCRIPTEN__
     std::unique_ptr<std::thread> mFileDialogThread;
+#endif
+
+#ifdef __EMSCRIPTEN__
+    struct TransferState {
+        float progress;
+        bool isUpload;
+    };
+    std::unordered_map<std::string, TransferState> mPendingTransfers;
 #endif
 };
 

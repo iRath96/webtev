@@ -45,3 +45,7 @@ __pycache__
 *.exe
 *.out
 *.app
+
+# Server runtime data
+/server/node_modules
+/server/sessions
