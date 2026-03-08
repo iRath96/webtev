@@ -182,8 +182,10 @@ public:
     void toggleImageInfoWindow();
     void updateImageInfoWindow();
 
+#ifndef __EMSCRIPTEN__
     void openImageDialog();
     void saveImageDialog();
+#endif
 
     void requestLayoutUpdate() { mRequiresLayoutUpdate = true; }
 
@@ -195,9 +197,11 @@ public:
     BackgroundImagesLoader& imagesLoader() const { return *mImagesLoader; }
     std::weak_ptr<Ipc> ipc() const { return mIpc; }
 
+#ifndef __EMSCRIPTEN__
     void copyImageCanvasToClipboard() const;
     void copyImageNameToClipboard() const;
     void pasteImagesFromClipboard();
+#endif
 
     void showErrorDialog(std::string_view message);
 
@@ -284,7 +288,9 @@ private:
     std::chrono::steady_clock::time_point mLastFileChangesCheckTime = {};
 
     nanogui::Button* mAutoFitToScreenButton = nullptr;
+#ifndef __EMSCRIPTEN__
     nanogui::Button* mResizeWindowToFitImageOnLoadButton = nullptr;
+#endif
 
     // Buttons which require a current image to be meaningful.
     std::vector<nanogui::Button*> mCurrentImageButtons;
@@ -366,7 +372,9 @@ private:
     bool mMaximizedLaunch = false;
     bool mMaximizedUnreliable = false;
 
+#ifndef __EMSCRIPTEN__
     std::unique_ptr<std::thread> mFileDialogThread;
+#endif
 };
 
 } // namespace tev

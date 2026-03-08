@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tev-web",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "import http.server, os; os.chdir('build-web'); H=type('H',(http.server.SimpleHTTPRequestHandler,),{'end_headers':lambda s:(s.send_header('Cross-Origin-Opener-Policy','same-origin'),s.send_header('Cross-Origin-Embedder-Policy','require-corp'),http.server.SimpleHTTPRequestHandler.end_headers(s))}); http.server.HTTPServer(('',8080),H).serve_forever()"
+      ],
+      "port": 8080
+    }
+  ]
+}

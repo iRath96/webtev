@@ -22,8 +22,10 @@
 #include <tev/imageio/BmpImageLoader.h>
 #include <tev/imageio/Colors.h>
 #include <tev/imageio/ImageLoader.h>
-#include <tev/imageio/JpegTurboImageLoader.h>
-#include <tev/imageio/PngImageLoader.h>
+#ifndef TEV_MINIMAL_FORMATS
+#    include <tev/imageio/JpegTurboImageLoader.h>
+#    include <tev/imageio/PngImageLoader.h>
+#endif
 
 #include <bit>
 
@@ -1116,10 +1118,14 @@ Task<vector<ImageData>> BmpImageLoader::loadWithoutFileHeader(
             }
         }
 
+#ifndef TEV_MINIMAL_FORMATS
         const auto jpegLoader = JpegTurboImageLoader{};
         try {
             co_return co_await jpegLoader.load(iStream, path, channelSelector, settings, priority);
         } catch (const FormatNotSupported&) { throw ImageLoadError{"BMP file uses JPEG compression, but JPEG data is not valid."}; }
+#else
+        throw ImageLoadError{"BMP file uses JPEG compression, which is not supported in this build."};
+#endif
     }
 
     if (compression == ECompression::Png) {
@@ -1132,10 +1138,14 @@ Task<vector<ImageData>> BmpImageLoader::loadWithoutFileHeader(
             }
         }
 
+#ifndef TEV_MINIMAL_FORMATS
         const auto pngLoader = PngImageLoader{};
         try {
             co_return co_await pngLoader.load(iStream, path, channelSelector, settings, priority);
         } catch (const FormatNotSupported&) { throw ImageLoadError{"BMP file uses PNG compression, but PNG data is not valid."}; }
+#else
+        throw ImageLoadError{"BMP file uses PNG compression, which is not supported in this build."};
+#endif
     }
 
     if (dib.bitsPerPixel == 0) {

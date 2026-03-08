@@ -102,7 +102,11 @@ void ImageCanvas::draw_contents() {
         mExposure,
         mOffset,
         mGamma,
+#ifndef __EMSCRIPTEN__
         mWhiteLevelOverride ? (*mWhiteLevelOverride / glfwGetWindowSdrWhiteLevel(glfwWindow)) : 1.0f,
+#else
+        1.0f,
+#endif
         mClipToLdr,
         mBackgroundColor,
         mTonemap,

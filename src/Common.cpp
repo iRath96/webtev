@@ -32,6 +32,9 @@
 
 #ifdef _WIN32
 #    include <Shlobj.h>
+#elif defined(__EMSCRIPTEN__)
+#    include <cstring>
+#    include <cerrno>
 #else
 #    include <cstring>
 #    include <fcntl.h>
@@ -39,7 +42,7 @@
 #    include <sys/wait.h>
 #    include <unistd.h>
 #endif
-#if !defined(__APPLE__) and !defined(_WIN32)
+#if !defined(__APPLE__) and !defined(_WIN32) and !defined(__EMSCRIPTEN__)
 #    include <sys/xattr.h>
 #endif
 
@@ -85,7 +88,15 @@ string toString(const fs::path& path) {
 }
 
 string toDisplayString(const fs::path& path) {
-#if !defined(__APPLE__) and !defined(_WIN32)
+#if defined(__EMSCRIPTEN__)
+    // Emscripten GLFW writes dropped files to /.glfw_dropped_files/<name>; strip that prefix for display.
+    string s = toString(path);
+    const string_view prefix = "/.glfw_dropped_files/";
+    if (s.starts_with(prefix)) {
+        return s.substr(prefix.size());
+    }
+    return s;
+#elif !defined(__APPLE__) and !defined(_WIN32)
     // When running under Flatpak, we don't necessarily get real paths from the
     // host system but rather files that were passed to us using the [document portal][1]
     // (`/run/user/$UID/doc/$DOC_ID/filename`). These are not nice to show to the user.
@@ -426,6 +437,8 @@ fs::path homeDirectory() {
     }
 
     return utf16to8(path);
+#elif defined(__EMSCRIPTEN__)
+    return "/home/web_user";
 #else
     struct passwd* pw = getpwuid(getuid());
     return pw->pw_dir;
@@ -435,6 +448,8 @@ fs::path homeDirectory() {
 fs::path runtimeDirectory() {
 #ifdef _WIN32
     return homeDirectory() / "AppData" / "Local" / "tev";
+#elif defined(__EMSCRIPTEN__)
+    return "/tmp";
 #else
     const char* xdgRuntimeDir = getenv("XDG_RUNTIME_DIR");
     if (!xdgRuntimeDir || !*xdgRuntimeDir) {
@@ -461,6 +476,8 @@ void toggleConsole() {
     if (GetCurrentProcessId() == consoleProcessId) {
         ShowWindow(console, IsWindowVisible(console) ? SW_HIDE : SW_SHOW);
     }
+#elif defined(__EMSCRIPTEN__)
+    // No-op on Emscripten
 #endif
 }
 
@@ -471,6 +488,10 @@ bool shuttingDown() { return sShuttingDown; }
 void setShuttingDown() { sShuttingDown = true; }
 
 const optional<FlatpakInfo>& flatpakInfo() {
+#ifdef __EMSCRIPTEN__
+    static const optional<FlatpakInfo> sFlatpakInfo = nullopt;
+    return sFlatpakInfo;
+#else
     static constexpr auto getFlatpakInfo = [] -> optional<FlatpakInfo> {
         const char* flatpakId = getenv("FLATPAK_ID");
         if (!flatpakId || !*flatpakId) {
@@ -510,6 +531,7 @@ const optional<FlatpakInfo>& flatpakInfo() {
 
     static const optional<FlatpakInfo> sFlatpakInfo = getFlatpakInfo();
     return sFlatpakInfo;
+#endif
 }
 
 string_view toString(EAlphaKind kind) {

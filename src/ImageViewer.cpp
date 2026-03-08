@@ -18,13 +18,15 @@
 
 #include <tev/Image.h>
 #include <tev/ImageViewer.h>
-#include <tev/WaylandClipboard.h>
 #include <tev/imageio/Colors.h>
 #include <tev/imageio/ImageLoader.h>
 #include <tev/imageio/ImageSaver.h>
-#include <tev/imageio/PngImageSaver.h>
 
-#include <clip.h>
+#ifndef __EMSCRIPTEN__
+#    include <tev/WaylandClipboard.h>
+#    include <tev/imageio/PngImageSaver.h>
+#    include <clip.h>
+#endif
 
 #include <nanogui/button.h>
 #include <nanogui/colorwheel.h>
@@ -263,7 +265,11 @@ ImageViewer::ImageViewer(
             mDisplayWhiteLevelBox->set_alignment(TextBox::Alignment::Right);
             mDisplayWhiteLevelBox->set_min_max_values(0.0f, 10000.0f);
             mDisplayWhiteLevelBox->set_fixed_width(90);
+#ifndef __EMSCRIPTEN__
             mDisplayWhiteLevelBox->set_value(glfwGetWindowSdrWhiteLevel(m_glfw_window));
+#else
+            mDisplayWhiteLevelBox->set_value(80.0f);
+#endif
             mDisplayWhiteLevelBox->set_default_value(to_string(DEFAULT_IMAGE_WHITE_LEVEL));
             mDisplayWhiteLevelBox->set_units("nits");
 
@@ -581,7 +587,11 @@ ImageViewer::ImageViewer(
         // Playback controls
         {
             auto playback = new Widget{mSidebarLayout};
+#ifdef __EMSCRIPTEN__
+            playback->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 2});
+#else
             playback->set_layout(new GridLayout{Orientation::Horizontal, 6, Alignment::Fill, 5, 2});
+#endif
 
             const auto makePlaybackButton =
                 [&](string_view name, bool enabled, function<void()> callback, int icon = 0, string_view tooltip = "") {
@@ -619,17 +629,23 @@ ImageViewer::ImageViewer(
             mAutoFitToScreenButton->set_flags(Button::Flags::ToggleButton);
             mAutoFitToScreenButton->set_change_callback([this](bool value) { setAutoFitToScreen(value); });
 
+#ifndef __EMSCRIPTEN__
             mResizeWindowToFitImageOnLoadButton =
                 makePlaybackButton("", true, {}, FA_WINDOW_RESTORE, "Automatically resize tev's window to fit image on load.");
             mResizeWindowToFitImageOnLoadButton->set_flags(Button::Flags::ToggleButton);
             mResizeWindowToFitImageOnLoadButton->set_change_callback([this](bool value) { setResizeWindowToFitImageOnLoad(value); });
             mResizeWindowToFitImageOnLoadButton->set_pushed(true);
+#endif
         }
 
         // Save, refresh, load, close
         {
             auto tools = new Widget{mSidebarLayout};
+#ifdef __EMSCRIPTEN__
+            tools->set_layout(new GridLayout{Orientation::Horizontal, 5, Alignment::Fill, 5, 1});
+#else
             tools->set_layout(new GridLayout{Orientation::Horizontal, 7, Alignment::Fill, 5, 1});
+#endif
 
             const auto makeImageButton =
                 [&](string_view name, bool enabled, function<void()> callback, int icon = 0, string_view tooltip = "") {
@@ -642,11 +658,13 @@ ImageViewer::ImageViewer(
                     return button;
                 };
 
+#ifndef __EMSCRIPTEN__
             makeImageButton("", true, [this] { openImageDialog(); }, FA_FOLDER, format("Open ({}+O)", HelpWindow::COMMAND));
 
             mCurrentImageButtons.push_back(
                 makeImageButton("", false, [this] { saveImageDialog(); }, FA_SAVE, format("Save ({}+S)", HelpWindow::COMMAND))
             );
+#endif
 
             mCurrentImageButtons.push_back(makeImageButton(
                 "", false, [this] { reloadImage(mCurrentImage); }, FA_RECYCLE, format("Reload ({}+R or F5)", HelpWindow::COMMAND)
@@ -1014,12 +1032,14 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
         } else if (key == GLFW_KEY_B && (modifiers & SYSTEM_COMMAND_MOD)) {
             setUiVisible(!isUiVisible());
             return true;
+#ifndef __EMSCRIPTEN__
         } else if (key == GLFW_KEY_O && (modifiers & SYSTEM_COMMAND_MOD)) {
             openImageDialog();
             return true;
         } else if (key == GLFW_KEY_S && (modifiers & SYSTEM_COMMAND_MOD)) {
             saveImageDialog();
             return true;
+#endif
         } else if (
             // question mark on US layout
             key == GLFW_KEY_SLASH && (modifiers & GLFW_MOD_SHIFT)
@@ -1049,6 +1069,7 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
         } else if (key == GLFW_KEY_Q && (modifiers & SYSTEM_COMMAND_MOD)) {
             set_visible(false);
             return true;
+#ifndef __EMSCRIPTEN__
         } else if (key == GLFW_KEY_C && (modifiers & SYSTEM_COMMAND_MOD)) {
             if (modifiers & GLFW_MOD_SHIFT) {
                 try {
@@ -1074,6 +1095,7 @@ bool ImageViewer::keyboard_event(int key, int scancode, int action, int modifier
             }
 
             return true;
+#endif
         }
     }
 
@@ -1222,7 +1244,11 @@ void ImageViewer::draw_contents() {
 
     // Update SDR white level from system settings if not overridden by the user
     if (displayWhiteLevelSetting() == EDisplayWhiteLevelSetting::System) {
+#ifndef __EMSCRIPTEN__
         mDisplayWhiteLevelBox->set_value(glfwGetWindowSdrWhiteLevel(m_glfw_window));
+#else
+        mDisplayWhiteLevelBox->set_value(80.0f);
+#endif
     }
 
     updateCurrentMonitorSize();
@@ -1379,11 +1405,19 @@ void ImageViewer::draw_contents() {
 
 void ImageViewer::updateColorCapabilities() {
     const auto prevColorSpace = mSystemColorSpace;
+#ifndef __EMSCRIPTEN__
     mSystemColorSpace = ColorSpace{
         .transfer = ituth273::fromWpTransfer(glfwGetWindowTransfer(m_glfw_window)),
         .primaries = static_cast<EWpPrimaries>(glfwGetWindowPrimaries(m_glfw_window)),
         .maxLuminance = glfwGetWindowMaxLuminance(m_glfw_window),
     };
+#else
+    mSystemColorSpace = ColorSpace{
+        .transfer = ituth273::ETransfer::SRGB,
+        .primaries = EWpPrimaries::SRGB,
+        .maxLuminance = 0.0f,
+    };
+#endif
 
     if (mSystemColorSpace == prevColorSpace) {
         return;
@@ -2005,7 +2039,11 @@ void ImageViewer::setDisplayWhiteLevelSetting(EDisplayWhiteLevelSetting setting)
     mDisplayWhiteLevelSettingComboBox->set_selected_index(static_cast<int>(setting));
 
     switch (displayWhiteLevelSetting()) {
+#ifndef __EMSCRIPTEN__
         case EDisplayWhiteLevelSetting::System: setDisplayWhiteLevel(glfwGetWindowSdrWhiteLevel(m_glfw_window)); break;
+#else
+        case EDisplayWhiteLevelSetting::System: setDisplayWhiteLevel(80.0f); break;
+#endif
         case EDisplayWhiteLevelSetting::Custom: break;
         case EDisplayWhiteLevelSetting::ImageMetadata: setDisplayWhiteLevelToImageMetadata();
     }
@@ -2041,12 +2079,19 @@ Vector2f ImageViewer::sizeToFitAllImages() {
 }
 
 void ImageViewer::resizeToFit(Vector2f targetSize) {
+#ifdef __EMSCRIPTEN__
+    // Cannot resize the browser window; this feature is a no-op on the web.
+    return;
+#endif
+
+#ifndef __EMSCRIPTEN__
     // On Wayland, some information like the current monitor or fractional DPI scaling is not available until some time has passed.
     // Potentially a few frames have been rendered. Hence postpone resizing until we have a valid monitor.
     if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND && !glfwGetWindowCurrentMonitor(m_glfw_window)) {
         mDidFitToImage = 2;
         return;
     }
+#endif
 
     // Only increase our current size if we are larger than the current size of the window.
     targetSize = max(Vector2f{m_size}, targetSize);
@@ -2076,6 +2121,7 @@ void ImageViewer::resizeToFit(Vector2f targetSize) {
     set_size(targetSize);
     move_window(-sizeDiff / 2);
 
+#ifndef __EMSCRIPTEN__
     // Ensure the window does not go off-screen by clamping its position. This does not work on Wayland, because Wayland does not allow
     // windows to control their own position. On Windows, we add additional padding because, otherwise, moving the mouse to the edge of the
     // screen does not allow the user to resize the window anymore.
@@ -2088,6 +2134,7 @@ void ImageViewer::resizeToFit(Vector2f targetSize) {
         pos = min(max(pos, minWindowPos), maxWindowPos);
         glfwSetWindowPos(m_glfw_window, pos.x(), pos.y());
     }
+#endif
 
     if (autoFitToScreen() && mCurrentImage) {
         mImageCanvas->fitImageToScreen(*mCurrentImage);
@@ -2130,13 +2177,21 @@ void ImageViewer::setAutoFitToScreen(bool value) {
     }
 }
 
-bool ImageViewer::resizeWindowToFitImageOnLoad() const { return mResizeWindowToFitImageOnLoadButton->pushed(); }
+bool ImageViewer::resizeWindowToFitImageOnLoad() const {
+#ifdef __EMSCRIPTEN__
+    return false;
+#else
+    return mResizeWindowToFitImageOnLoadButton->pushed();
+#endif
+}
 
 void ImageViewer::setResizeWindowToFitImageOnLoad(bool value) {
+#ifndef __EMSCRIPTEN__
     mResizeWindowToFitImageOnLoadButton->set_pushed(value);
     if (value && mCurrentImage) {
         resizeToFit(sizeToFitImage(mCurrentImage));
     }
+#endif
 }
 
 void ImageViewer::maximize() {
@@ -2226,6 +2281,8 @@ void ImageViewer::updateImageInfoWindow() {
         }
     }
 }
+
+#ifndef __EMSCRIPTEN__
 
 void ImageViewer::openImageDialog() {
     if (mFileDialogThread) {
@@ -2434,6 +2491,10 @@ void ImageViewer::copyImageNameToClipboard() const {
     tlog::success("Image path copied to clipboard.");
 }
 
+#endif // !__EMSCRIPTEN__
+
+#ifndef __EMSCRIPTEN__
+
 void ImageViewer::pasteImagesFromClipboard() {
     stringstream imageStream;
     if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
@@ -2486,6 +2547,8 @@ void ImageViewer::pasteImagesFromClipboard() {
         }
     }
 }
+
+#endif // !__EMSCRIPTEN__
 
 void ImageViewer::showErrorDialog(string_view message) {
     tlog::error(message);
@@ -2868,6 +2931,13 @@ shared_ptr<Image> ImageViewer::imageByName(string_view imageName) {
 }
 
 void ImageViewer::updateCurrentMonitorSize() {
+#ifdef __EMSCRIPTEN__
+    // On Emscripten, use the canvas size as the "monitor" size
+    int canvasW, canvasH;
+    glfwGetFramebufferSize(m_glfw_window, &canvasW, &canvasH);
+    mMinWindowPos = Vector2f{0, 0};
+    mMaxWindowSize = Vector2f{(float)canvasW, (float)canvasH};
+#else
     if (GLFWmonitor* monitor = glfwGetWindowCurrentMonitor(m_glfw_window)) {
         Vector2i pos, size;
         glfwGetMonitorWorkarea(monitor, &pos.x(), &pos.y(), &size.x(), &size.y());
@@ -2887,10 +2957,12 @@ void ImageViewer::updateCurrentMonitorSize() {
         auto posf = Vector2f{pos};
         auto sizef = Vector2f{size};
 
+#ifndef __EMSCRIPTEN__
         if (glfwGetPlatform() == GLFW_PLATFORM_WAYLAND) {
             posf = posf / pixel_ratio();
             sizef = sizef / pixel_ratio();
         }
+#endif
 
         if (posf == mMinWindowPos && sizef == mMaxWindowSize) {
             return;
@@ -2901,6 +2973,7 @@ void ImageViewer::updateCurrentMonitorSize() {
 
         tlog::debug("Current monitor: pos={} size={}", mMinWindowPos, mMaxWindowSize);
     }
+#endif // !__EMSCRIPTEN__
 }
 
 } // namespace tev

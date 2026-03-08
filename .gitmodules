@@ -32,7 +32,7 @@
 	shallow = true
 [submodule "dependencies/nanogui"]
 	path = dependencies/nanogui
-	url = https://github.com/Tom94/nanogui-1
+	url = https://github.com/iRath96/nanogui
 	shallow = true
 [submodule "dependencies/qoi"]
 	path = dependencies/qoi

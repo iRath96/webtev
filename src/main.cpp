@@ -33,6 +33,10 @@
 #    include <GLFW/glfw3native.h>
 #endif
 
+#ifdef __EMSCRIPTEN__
+#    include <emscripten.h>
+#endif
+
 #include <iostream>
 #include <thread>
 
@@ -45,6 +49,26 @@ namespace tev {
 // a truly modular program, this would never be required, but OpenGL's state-machine nature throws a wrench into modularity. Currently, the
 // only use case is the destruction of OpenGL textures, which _must_ happen on the thread on which the GL context is "current".
 static ImageViewer* sImageViewer = nullptr;
+
+#ifdef __EMSCRIPTEN__
+// Called from JavaScript custom drop handler with newline-separated VFS paths.
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_drop_files(const char* pathsNewlineSeparated) {
+    if (!sImageViewer) return;
+
+    vector<string> paths;
+    string input(pathsNewlineSeparated);
+    size_t pos = 0, next;
+    while ((next = input.find('\n', pos)) != string::npos) {
+        if (next > pos) paths.push_back(input.substr(pos, next - pos));
+        pos = next + 1;
+    }
+    if (pos < input.size()) paths.push_back(input.substr(pos));
+
+    if (!paths.empty()) {
+        sImageViewer->drop_event(paths);
+    }
+}
+#endif
 static atomic<bool> imageViewerIsReady = false;
 
 void scheduleToMainThread(const function<void()>& fun) {
@@ -582,7 +606,11 @@ static int mainFunc(span<const string> arguments) {
     // instance of tev rather than focusing the existing one.)
     const bool newWindow = (!imageFiles && !newWindowFlagOff) || newWindowFlagOn;
 
+#ifdef __EMSCRIPTEN__
+    const shared_ptr<Ipc> ipc = nullptr;
+#else
     const auto ipc = convertToFlag ? nullptr : (hostnameFlag ? make_shared<Ipc>(get(hostnameFlag)) : make_shared<Ipc>());
+#endif
 
     // If we're not the primary instance and did not request to open a new window, simply send the to-be-opened images to the primary
     // instance.
@@ -637,6 +665,7 @@ static int mainFunc(span<const string> arguments) {
         }
     }
 
+#ifndef __EMSCRIPTEN__
     // Spawn a background thread that opens images passed via stdin. To allow whitespace characters in filenames, we use the convention that
     // paths in stdin must be separated by newlines.
     auto stdinThread = thread{[weakImagesLoader = weak_ptr<BackgroundImagesLoader>{imagesLoader}]() {
@@ -666,7 +695,9 @@ static int mainFunc(span<const string> arguments) {
     // HACK: It is unfortunately not easily possible to poll/timeout on cin in a portable manner, so instead we resort to simply detaching
     // this thread, causing it to be forcefully terminated as the main thread terminates.
     stdinThread.detach();
+#endif
 
+#ifndef __EMSCRIPTEN__
     // Spawn another background thread, this one dealing with images passed to us via inter-process communication (IPC). This happens when a
     // user starts another instance of tev while one is already running. Note, that this behavior can be overridden by the -n flag, so not
     // _all_ secondary instances send their paths to the primary instance.
@@ -690,13 +721,15 @@ static int mainFunc(span<const string> arguments) {
             }
         } catch (const runtime_error& e) { tlog::warning("Uncaught exception in IPC thread: {}", e.what()); }
     }};
+#endif
 
-    const auto backgroundThreadShutdownGuard = ScopeGuard{[&]() {
+    auto backgroundThreadShutdownGuard = ScopeGuard{[&]() {
         setShuttingDown();
 
         ThreadPool::global().waitUntilFinished();
         ThreadPool::global().shutdown();
 
+#ifndef __EMSCRIPTEN__
         if (ipcThread.joinable()) {
             ipcThread.join();
         }
@@ -705,6 +738,7 @@ static int mainFunc(span<const string> arguments) {
         if (stdinThread.joinable()) {
             stdinThread.join();
         }
+#endif
     }};
 
     // Load images passed via command line in the background prior to creating our main application such that they are not stalled by the
@@ -741,7 +775,7 @@ static int mainFunc(span<const string> arguments) {
     glfwSetErrorCallback([](int error, const char* description) { tlog::warning("GLFW error {}: {}", error, description); });
     nanogui::init(!get(ldrFlag));
 
-    const auto nanoguiShutdownGuard = ScopeGuard{[&]() {
+    auto nanoguiShutdownGuard = ScopeGuard{[&]() {
     // On some linux distributions glfwTerminate() (which is called by nanogui::shutdown()) causes segfaults. Since we are done with our
     // program here anyways, let's let the OS clean up after us.
 #if defined(__APPLE__) or defined(_WIN32)
@@ -749,7 +783,7 @@ static int mainFunc(span<const string> arguments) {
 #endif
     }};
 
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(__EMSCRIPTEN__)
     // On macOS, the mechanism for opening an application passes filenames through the NS api rather than CLI arguments, which means we need
     // special handling of these through GLFW. There are two components to this special handling:
 
@@ -897,6 +931,12 @@ static int mainFunc(span<const string> arguments) {
     sImageViewer->redraw();
 
     // Refresh only every 250ms if there are no user interactions. This makes an idling tev surprisingly energy-efficient. :)
+#ifdef __EMSCRIPTEN__
+    // On Emscripten, nanogui::run() registers requestAnimationFrame and returns immediately.
+    // Disarm ScopeGuards so cleanup doesn't happen when mainFunc returns — the app keeps running.
+    backgroundThreadShutdownGuard.disarm();
+    nanoguiShutdownGuard.disarm();
+#endif
     nanogui::run(nanogui::RunMode::Lazy);
 
     return 0;

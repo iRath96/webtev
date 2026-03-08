@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tev — The EDR Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: #333; }
+        #canvas {
+            width: 100vw;
+            height: 100vh;
+            display: block;
+            outline: none;
+        }
+        #status {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ccc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            font-size: 16px;
+            text-align: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #progress {
+            width: 300px;
+            height: 4px;
+            background: #555;
+            margin: 12px auto 0;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        #progress-bar {
+            height: 100%;
+            background: #7a7ae0;
+            width: 0%;
+            transition: width 0.2s;
+        }
+        .loaded #status { display: none; }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+    <div id="status">
+        <div>Loading tev...</div>
+        <div id="progress"><div id="progress-bar"></div></div>
+    </div>
+
+    <script>
+        var Module = {
+            canvas: (function() { return document.getElementById('canvas'); })(),
+            setStatus: function(text) {
+                var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+                var progressBar = document.getElementById('progress-bar');
+                if (m) {
+                    progressBar.style.width = (parseInt(m[2]) * 100 / parseInt(m[4])) + '%';
+                } else if (text === '') {
+                    document.body.classList.add('loaded');
+                }
+                var statusEl = document.getElementById('status');
+                if (statusEl) statusEl.firstElementChild.textContent = text || 'Loading tev...';
+            },
+            totalDependencies: 0,
+            monitorRunDependencies: function(left) {
+                this.totalDependencies = Math.max(this.totalDependencies, left);
+                Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies - left) + '/' + this.totalDependencies + ')' : '');
+            }
+        };
+        Module.setStatus('Downloading...');
+        window.onerror = function() {
+            Module.setStatus('Exception thrown, see JavaScript console');
+        };
+
+        /* Custom drop handler: deduplicates filenames and bypasses GLFW's
+           built-in handler (which overwrites same-named files in the VFS). */
+        (function() {
+            var canvas = document.getElementById('canvas');
+            var DROP_DIR = '/.glfw_dropped_files';
+
+            canvas.addEventListener('dragover', function(e) {
+                e.preventDefault();
+            }, true);
+
+            canvas.addEventListener('drop', function(e) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+
+                var files = e.dataTransfer ? e.dataTransfer.files : null;
+                if (!files || !files.length) return;
+
+                /* Deduplicate: append " (2)", " (3)", etc. for colliding names */
+                var nameCount = {};
+                var entries = [];
+                for (var i = 0; i < files.length; i++) {
+                    var origName = files[i].name.replace(/\//g, '_');
+                    var name = origName;
+                    if (nameCount[origName]) {
+                        var dot = origName.lastIndexOf('.');
+                        var base = dot >= 0 ? origName.substring(0, dot) : origName;
+                        var ext  = dot >= 0 ? origName.substring(dot) : '';
+                        name = base + ' (' + (nameCount[origName] + 1) + ')' + ext;
+                    }
+                    nameCount[origName] = (nameCount[origName] || 0) + 1;
+                    entries.push({ file: files[i], path: DROP_DIR + '/' + name });
+                }
+
+                /* Read all files, write to VFS, then call C++ */
+                var pending = entries.length;
+                var paths = entries.map(function(e) { return e.path; });
+
+                FS.createPath('/', '.glfw_dropped_files');
+
+                entries.forEach(function(entry) {
+                    var reader = new FileReader();
+                    reader.onloadend = function() {
+                        if (reader.readyState === 2) {
+                            FS.writeFile(entry.path, new Uint8Array(reader.result));
+                        }
+                        if (--pending === 0) {
+                            Module.ccall('tev_drop_files', null, ['string'], [paths.join('\n')]);
+                        }
+                    };
+                    reader.readAsArrayBuffer(entry.file);
+                });
+            }, true);
+        })();
+    </script>
+    {{{ SCRIPT }}}
+</body>
+</html>

@@ -83,97 +83,103 @@ target_include_directories(lcms2-tev PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Little-CMS/plugins/fast_float/include
 )
 
-cmake_host_system_information(RESULT HAS_SSE2 QUERY HAS_SSE2)
-if (NOT HAS_SSE2)
-    message(STATUS "SSE2 not supported on this system; disabling it in Little-CMS")
+if (EMSCRIPTEN)
     target_compile_definitions(lcms2-tev PRIVATE -DCMS_DONT_USE_SSE2=1)
-endif()
-
-# Compile libpng
-set(PNG_SHARED OFF CACHE BOOL " " FORCE)
-set(PNG_STATIC ON CACHE BOOL " " FORCE)
-set(PNG_FRAMEWORK OFF CACHE BOOL " " FORCE)
-set(PNG_TESTS OFF CACHE BOOL " " FORCE)
-set(PNG_TOOLS OFF CACHE BOOL " " FORCE)
-set(SKIP_INSTALL_ALL ON CACHE BOOL " " FORCE)
-add_subdirectory(libpng EXCLUDE_FROM_ALL)
-add_dependencies(png_static zlibstatic)
-target_include_directories(png_static PRIVATE ${ZLIB_INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/zlib)
-
-# Compile libexif for Exif metadata parsing
-add_subdirectory(libexif EXCLUDE_FROM_ALL)
-
-# Compile libjpeg-turbo for JPEG support
-set(JPEGTURBO_TARGET_NAME turbojpeg)
-set(JPEGTURBO_PREFIX_DIR ${CMAKE_CURRENT_BINARY_DIR}/${JPEGTURBO_TARGET_NAME})
-set(JPEGTURBO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg-turbo)
-set(JPEGTURBO_BINARY_DIR ${JPEGTURBO_PREFIX_DIR}/src/${JPEGTURBO_TARGET_NAME}-build)
-set(JPEG_INCLUDE_DIRS ${JPEGTURBO_SOURCE_DIR}/src ${JPEGTURBO_BINARY_DIR})
-if(MSVC)
-    set(JPEG_LIB ${CMAKE_STATIC_LIBRARY_PREFIX}jpeg-static${CMAKE_STATIC_LIBRARY_SUFFIX})
 else()
-    set(JPEG_LIB ${CMAKE_STATIC_LIBRARY_PREFIX}jpeg${CMAKE_STATIC_LIBRARY_SUFFIX})
+    cmake_host_system_information(RESULT HAS_SSE2 QUERY HAS_SSE2)
+    if (NOT HAS_SSE2)
+        message(STATUS "SSE2 not supported on this system; disabling it in Little-CMS")
+        target_compile_definitions(lcms2-tev PRIVATE -DCMS_DONT_USE_SSE2=1)
+    endif()
 endif()
-if(IS_MULTI)
-    set(JPEG_LIB_PREFIX ${JPEGTURBO_BINARY_DIR}/$<CONFIG>/)
-else()
-    set(JPEG_LIB_PREFIX ${JPEGTURBO_BINARY_DIR}/)
-endif()
-set(JPEG_LIBRARIES ${JPEG_LIB_PREFIX}${JPEG_LIB})
-set(JPEG_VERSION "80")
-ExternalProject_Add(${JPEGTURBO_TARGET_NAME}
-    PREFIX ${JPEGTURBO_PREFIX_DIR}
-    SOURCE_DIR ${JPEGTURBO_SOURCE_DIR}
-    BINARY_DIR ${JPEGTURBO_BINARY_DIR}
-    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config $<CONFIG> --target jpeg-static
-    CMAKE_ARGS
-        -DENABLE_SHARED=0
-        -DWITH_JPEG8=1
-        -DWITH_TURBOJPEG=0
-        -DWITH_TOOLS=0
-        -DWITH_TESTS=0
-        -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
-        -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
-        -DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}
-    BUILD_BYPRODUCTS ${JPEG_LIBRARIES}
-    INSTALL_COMMAND ""
-)
 
-# The following variables ensure that find_package can find libjpeg-turbo
-set(JPEG_LIBRARY ${JPEG_LIBRARIES})
-set(JPEG_INCLUDE_DIR ${JPEGTURBO_SOURCE_DIR})
+if (NOT EMSCRIPTEN)
+    # Compile libpng
+    set(PNG_SHARED OFF CACHE BOOL " " FORCE)
+    set(PNG_STATIC ON CACHE BOOL " " FORCE)
+    set(PNG_FRAMEWORK OFF CACHE BOOL " " FORCE)
+    set(PNG_TESTS OFF CACHE BOOL " " FORCE)
+    set(PNG_TOOLS OFF CACHE BOOL " " FORCE)
+    set(SKIP_INSTALL_ALL ON CACHE BOOL " " FORCE)
+    add_subdirectory(libpng EXCLUDE_FROM_ALL)
+    add_dependencies(png_static zlibstatic)
+    target_include_directories(png_static PRIVATE ${ZLIB_INCLUDE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/zlib)
 
-add_library(jpeg-turbo INTERFACE IMPORTED GLOBAL)
-add_dependencies(jpeg-turbo ${JPEGTURBO_TARGET_NAME})
-set_target_properties(jpeg-turbo PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${JPEG_INCLUDE_DIRS}"
-    INTERFACE_LINK_LIBRARIES "${JPEG_LIBRARIES}"
-)
-add_library(JPEG::JPEG ALIAS jpeg-turbo)
-set(JPEG_FOUND TRUE CACHE BOOL " " FORCE)
+    # Compile libexif for Exif metadata parsing
+    add_subdirectory(libexif EXCLUDE_FROM_ALL)
 
-# Compile OpenJPEG for JPEG 2000 support
-set(BUILD_CODEC OFF CACHE BOOL " " FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL " " FORCE)
-set(BUILD_TESTING OFF CACHE BOOL " " FORCE)
-add_subdirectory(openjpeg EXCLUDE_FROM_ALL)
+    # Compile libjpeg-turbo for JPEG support
+    set(JPEGTURBO_TARGET_NAME turbojpeg)
+    set(JPEGTURBO_PREFIX_DIR ${CMAKE_CURRENT_BINARY_DIR}/${JPEGTURBO_TARGET_NAME})
+    set(JPEGTURBO_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libjpeg-turbo)
+    set(JPEGTURBO_BINARY_DIR ${JPEGTURBO_PREFIX_DIR}/src/${JPEGTURBO_TARGET_NAME}-build)
+    set(JPEG_INCLUDE_DIRS ${JPEGTURBO_SOURCE_DIR}/src ${JPEGTURBO_BINARY_DIR})
+    if(MSVC)
+        set(JPEG_LIB ${CMAKE_STATIC_LIBRARY_PREFIX}jpeg-static${CMAKE_STATIC_LIBRARY_SUFFIX})
+    else()
+        set(JPEG_LIB ${CMAKE_STATIC_LIBRARY_PREFIX}jpeg${CMAKE_STATIC_LIBRARY_SUFFIX})
+    endif()
+    if(IS_MULTI)
+        set(JPEG_LIB_PREFIX ${JPEGTURBO_BINARY_DIR}/$<CONFIG>/)
+    else()
+        set(JPEG_LIB_PREFIX ${JPEGTURBO_BINARY_DIR}/)
+    endif()
+    set(JPEG_LIBRARIES ${JPEG_LIB_PREFIX}${JPEG_LIB})
+    set(JPEG_VERSION "80")
+    ExternalProject_Add(${JPEGTURBO_TARGET_NAME}
+        PREFIX ${JPEGTURBO_PREFIX_DIR}
+        SOURCE_DIR ${JPEGTURBO_SOURCE_DIR}
+        BINARY_DIR ${JPEGTURBO_BINARY_DIR}
+        BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config $<CONFIG> --target jpeg-static
+        CMAKE_ARGS
+            -DENABLE_SHARED=0
+            -DWITH_JPEG8=1
+            -DWITH_TURBOJPEG=0
+            -DWITH_TOOLS=0
+            -DWITH_TESTS=0
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
+            -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=${CMAKE_MSVC_RUNTIME_LIBRARY}
+        BUILD_BYPRODUCTS ${JPEG_LIBRARIES}
+        INSTALL_COMMAND ""
+    )
 
-# The following variables ensure that find_package can find OpenJPEG
-set(OpenJPEG_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/openjpeg/src/lib/openjp2
-    ${CMAKE_CURRENT_BINARY_DIR}/openjpeg/src/lib/openjp2
-)
+    # The following variables ensure that find_package can find libjpeg-turbo
+    set(JPEG_LIBRARY ${JPEG_LIBRARIES})
+    set(JPEG_INCLUDE_DIR ${JPEGTURBO_SOURCE_DIR})
 
-set(OpenJPEG_FOUND TRUE CACHE BOOL " " FORCE)
-set(OPENJPEG_FOUND TRUE CACHE BOOL " " FORCE)
+    add_library(jpeg-turbo INTERFACE IMPORTED GLOBAL)
+    add_dependencies(jpeg-turbo ${JPEGTURBO_TARGET_NAME})
+    set_target_properties(jpeg-turbo PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${JPEG_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES "${JPEG_LIBRARIES}"
+    )
+    add_library(JPEG::JPEG ALIAS jpeg-turbo)
+    set(JPEG_FOUND TRUE CACHE BOOL " " FORCE)
 
-add_library(openjpeg-tev INTERFACE IMPORTED GLOBAL)
-add_dependencies(openjpeg-tev openjp2)
-set_target_properties(openjpeg-tev PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${OpenJPEG_INCLUDE_DIRS}"
-    INTERFACE_LINK_LIBRARIES openjp2
-    INTERFACE_COMPILE_DEFINITIONS OPJ_STATIC
-)
+    # Compile OpenJPEG for JPEG 2000 support
+    set(BUILD_CODEC OFF CACHE BOOL " " FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL " " FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL " " FORCE)
+    add_subdirectory(openjpeg EXCLUDE_FROM_ALL)
+
+    # The following variables ensure that find_package can find OpenJPEG
+    set(OpenJPEG_INCLUDE_DIRS
+        ${CMAKE_CURRENT_SOURCE_DIR}/openjpeg/src/lib/openjp2
+        ${CMAKE_CURRENT_BINARY_DIR}/openjpeg/src/lib/openjp2
+    )
+
+    set(OpenJPEG_FOUND TRUE CACHE BOOL " " FORCE)
+    set(OPENJPEG_FOUND TRUE CACHE BOOL " " FORCE)
+
+    add_library(openjpeg-tev INTERFACE IMPORTED GLOBAL)
+    add_dependencies(openjpeg-tev openjp2)
+    set_target_properties(openjpeg-tev PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${OpenJPEG_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES openjp2
+        INTERFACE_COMPILE_DEFINITIONS OPJ_STATIC
+    )
+endif() # NOT EMSCRIPTEN
 
 # Compile aom (dependency of libheif, which follows)
 if (TEV_SUPPORT_AVIF)
@@ -318,32 +324,34 @@ if (TEV_USE_LIBHEIF)
     endif()
 endif()
 
-# Compile libwebp
-set(WEBP_LINK_STATIC ON CACHE BOOL " " FORCE)
-set(WEBP_ENABLE_SIMD ON CACHE BOOL " " FORCE)
-set(WEBP_BUILD_ANIM_UTILS OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_CWEBP OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_DWEBP OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_GIF2WEBP OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_IMG2WEBP OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_VWEBP OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_WEBPINFO OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_WEBPMUX ON CACHE BOOL " " FORCE)
-set(WEBP_BUILD_EXTRAS OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL " " FORCE)
-set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL " " FORCE)
-set(WEBP_USE_THREAD ON CACHE BOOL " " FORCE)
-set(WEBP_NEAR_LOSSLESS ON CACHE BOOL " " FORCE)
-set(WEBP_ENABLE_SWAP_16BIT_CSP ON CACHE BOOL " " FORCE)
-add_subdirectory(libwebp EXCLUDE_FROM_ALL)
+if (NOT EMSCRIPTEN)
+    # Compile libwebp
+    set(WEBP_LINK_STATIC ON CACHE BOOL " " FORCE)
+    set(WEBP_ENABLE_SIMD ON CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_ANIM_UTILS OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_CWEBP OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_DWEBP OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_GIF2WEBP OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_IMG2WEBP OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_VWEBP OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_WEBPINFO OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_LIBWEBPMUX OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_WEBPMUX ON CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_EXTRAS OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL " " FORCE)
+    set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL " " FORCE)
+    set(WEBP_USE_THREAD ON CACHE BOOL " " FORCE)
+    set(WEBP_NEAR_LOSSLESS ON CACHE BOOL " " FORCE)
+    set(WEBP_ENABLE_SWAP_16BIT_CSP ON CACHE BOOL " " FORCE)
+    add_subdirectory(libwebp EXCLUDE_FROM_ALL)
 
-set(WebP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libwebp/src)
-set(WebP_LIBRARY webpdecoder)
-add_library(webp_wrapper INTERFACE)
-target_link_libraries(webp_wrapper INTERFACE webpdecoder)
-target_include_directories(webp_wrapper INTERFACE ${WebP_INCLUDE_DIR})
-add_library(WebP::webp ALIAS webp_wrapper)
+    set(WebP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/libwebp/src)
+    set(WebP_LIBRARY webpdecoder)
+    add_library(webp_wrapper INTERFACE)
+    target_link_libraries(webp_wrapper INTERFACE webpdecoder)
+    target_include_directories(webp_wrapper INTERFACE ${WebP_INCLUDE_DIR})
+    add_library(WebP::webp ALIAS webp_wrapper)
+endif() # NOT EMSCRIPTEN
 
 # Compile OpenEXR
 set(BUILD_TESTING OFF CACHE BOOL " " FORCE)
@@ -377,45 +385,47 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_definitions(OpenEXRCore PRIVATE _GNU_SOURCE)
 endif()
 
-# Compile libtiff
-set(BUILD_SHARED_LIBS OFF CACHE BOOL " " FORCE)
-set(tiff-tools OFF CACHE BOOL " " FORCE)
-set(tiff-tests OFF CACHE BOOL " " FORCE)
-set(tiff-contrib OFF CACHE BOOL " " FORCE)
-set(tiff-docs OFF CACHE BOOL " " FORCE)
-set(tiff-deprecated OFF CACHE BOOL " " FORCE)
-set(tiff-install OFF CACHE BOOL " " FORCE)
-# Disable lzma, webp, and zstd support in libtiff as we don't need them.
-set(jbig OFF CACHE BOOL " " FORCE)
-set(lerc OFF CACHE BOOL " " FORCE)
-set(lzma OFF CACHE BOOL " " FORCE)
-set(zstd OFF CACHE BOOL " " FORCE)
-set(HAVE_JPEGTURBO_DUAL_MODE_8_12 TRUE CACHE BOOL " " FORCE)
-add_subdirectory(libtiff EXCLUDE_FROM_ALL)
+if (NOT EMSCRIPTEN)
+    # Compile libtiff
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL " " FORCE)
+    set(tiff-tools OFF CACHE BOOL " " FORCE)
+    set(tiff-tests OFF CACHE BOOL " " FORCE)
+    set(tiff-contrib OFF CACHE BOOL " " FORCE)
+    set(tiff-docs OFF CACHE BOOL " " FORCE)
+    set(tiff-deprecated OFF CACHE BOOL " " FORCE)
+    set(tiff-install OFF CACHE BOOL " " FORCE)
+    # Disable lzma, webp, and zstd support in libtiff as we don't need them.
+    set(jbig OFF CACHE BOOL " " FORCE)
+    set(lerc OFF CACHE BOOL " " FORCE)
+    set(lzma OFF CACHE BOOL " " FORCE)
+    set(zstd OFF CACHE BOOL " " FORCE)
+    set(HAVE_JPEGTURBO_DUAL_MODE_8_12 TRUE CACHE BOOL " " FORCE)
+    add_subdirectory(libtiff EXCLUDE_FROM_ALL)
 
-# Compile clip
-set(CLIP_EXAMPLES OFF CACHE BOOL " " FORCE)
-set(CLIP_TESTS OFF CACHE BOOL " " FORCE)
-set(CLIP_X11_WITH_PNG ON CACHE BOOL " " FORCE)
-set(CLIP_X11_PNG_LIBRARY png_static CACHE STRING " " FORCE)
-add_subdirectory(clip)
-target_include_directories(clip INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/clip)
-target_compile_definitions(clip PRIVATE -DHAVE_PNG_H)
+    # Compile clip
+    set(CLIP_EXAMPLES OFF CACHE BOOL " " FORCE)
+    set(CLIP_TESTS OFF CACHE BOOL " " FORCE)
+    set(CLIP_X11_WITH_PNG ON CACHE BOOL " " FORCE)
+    set(CLIP_X11_PNG_LIBRARY png_static CACHE STRING " " FORCE)
+    add_subdirectory(clip)
+    target_include_directories(clip INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/clip)
+    target_compile_definitions(clip PRIVATE -DHAVE_PNG_H)
 
-# Compile libraw
-set(LIBRAW_PATH "${CMAKE_CURRENT_SOURCE_DIR}/LibRaw" CACHE PATH " " FORCE)
-set(ENABLE_OPENMP OFF CACHE BOOL " " FORCE)
-set(LCMS2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Little-CMS/include" CACHE PATH " " FORCE)
-set(LCMS2_LIBRARIES lcms2-tev CACHE STRING " " FORCE)
-add_subdirectory(LibRaw-cmake)
+    # Compile libraw
+    set(LIBRAW_PATH "${CMAKE_CURRENT_SOURCE_DIR}/LibRaw" CACHE PATH " " FORCE)
+    set(ENABLE_OPENMP OFF CACHE BOOL " " FORCE)
+    set(LCMS2_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Little-CMS/include" CACHE PATH " " FORCE)
+    set(LCMS2_LIBRARIES lcms2-tev CACHE STRING " " FORCE)
+    add_subdirectory(LibRaw-cmake)
 
-# Compile expat (xml parser) and then xmp which depends on it
-set(EXPAT_BUILD_DOCS OFF CACHE BOOL " " FORCE)
-set(EXPAT_BUILD_EXAMPLES OFF CACHE BOOL " " FORCE)
-set(EXPAT_BUILD_PKGCONFIG OFF CACHE BOOL " " FORCE)
-set(EXPAT_BUILD_TESTS OFF CACHE BOOL " " FORCE)
-set(EXPAT_BUILD_TOOLS OFF CACHE BOOL " " FORCE)
-set(EXPAT_ENABLE_INSTALL OFF CACHE BOOL " " FORCE)
-set(EXPAT_SHARED_LIBS OFF CACHE BOOL " " FORCE)
-add_subdirectory(libexpat/expat EXCLUDE_FROM_ALL)
-add_subdirectory(xmp EXCLUDE_FROM_ALL)
+    # Compile expat (xml parser) and then xmp which depends on it
+    set(EXPAT_BUILD_DOCS OFF CACHE BOOL " " FORCE)
+    set(EXPAT_BUILD_EXAMPLES OFF CACHE BOOL " " FORCE)
+    set(EXPAT_BUILD_PKGCONFIG OFF CACHE BOOL " " FORCE)
+    set(EXPAT_BUILD_TESTS OFF CACHE BOOL " " FORCE)
+    set(EXPAT_BUILD_TOOLS OFF CACHE BOOL " " FORCE)
+    set(EXPAT_ENABLE_INSTALL OFF CACHE BOOL " " FORCE)
+    set(EXPAT_SHARED_LIBS OFF CACHE BOOL " " FORCE)
+    add_subdirectory(libexpat/expat EXCLUDE_FROM_ALL)
+    add_subdirectory(xmp EXCLUDE_FROM_ALL)
+endif() # NOT EMSCRIPTEN

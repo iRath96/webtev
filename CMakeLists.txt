@@ -31,6 +31,8 @@ if (APPLE)
     enable_language(OBJCXX OBJC)
 endif()
 
+# Emscripten feature force-offs are applied after options are declared; see below.
+
 if (TEV_DEPLOY)
     set(TEV_VERSION_DEV "${TEV_VERSION}")
 else()
@@ -58,6 +60,13 @@ option(TEV_VALIDATE_METAINFO "Validate generated metainfo for flatpak release" O
 
 set(TEV_USE_LIBHEIF ON)
 
+if (EMSCRIPTEN)
+    set(TEV_SUPPORT_AVIF OFF)
+    set(TEV_SUPPORT_HEIC OFF)
+    set(TEV_SUPPORT_JXL OFF)
+    set(TEV_USE_LIBHEIF OFF)
+endif()
+
 # Set ourselves as the startup project in visual studio.
 # Not available until cmake 3.6, but doesn't break older versions.
 set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT tev)
@@ -79,6 +88,11 @@ endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+if (EMSCRIPTEN)
+    # All targets need -pthread for SharedArrayBuffer/pthreads support
+    add_compile_options(-pthread -fexceptions)
+endif()
 
 if (MSVC)
     # Disable annoying secure CRT warnings
@@ -116,7 +130,7 @@ macro(CHECK_CXX_COMPILER_AND_LINKER_FLAGS _RESULT _CXX_FLAGS _LINKER_FLAGS)
     set(CMAKE_REQUIRED_LIBRARIES "")
 endmacro()
 
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT EMSCRIPTEN AND NOT CMAKE_CXX_FLAGS MATCHES "-stdlib=libc\\+\\+")
     CHECK_CXX_COMPILER_AND_LINKER_FLAGS(HAS_LIBCPP "-stdlib=libc++" "-stdlib=libc++")
     if (APPLE OR HAS_LIBCPP)
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++ -D_LIBCPP_VERSION")
@@ -145,34 +159,20 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/dependencies)
 
 set(TEV_SOURCES
     include/tev/imageio/BmpImageLoader.h src/imageio/BmpImageLoader.cpp
-    include/tev/imageio/ClipboardImageLoader.h src/imageio/ClipboardImageLoader.cpp
     include/tev/imageio/Colors.h src/imageio/Colors.cpp
-    include/tev/imageio/Demosaic.h src/imageio/Demosaic.cpp
     include/tev/imageio/EmptyImageLoader.h src/imageio/EmptyImageLoader.cpp
-    include/tev/imageio/Exif.h src/imageio/Exif.cpp
     include/tev/imageio/ExrImageLoader.h src/imageio/ExrImageLoader.cpp
     include/tev/imageio/ExrImageSaver.h src/imageio/ExrImageSaver.cpp
     include/tev/imageio/GainMap.h src/imageio/GainMap.cpp
     include/tev/imageio/IcoImageLoader.h src/imageio/IcoImageLoader.cpp
     include/tev/imageio/ImageLoader.h src/imageio/ImageLoader.cpp
     include/tev/imageio/ImageSaver.h src/imageio/ImageSaver.cpp
-    include/tev/imageio/Ifd.h src/imageio/Ifd.cpp
-    include/tev/imageio/IsoGainMapMetadata.h src/imageio/IsoGainMapMetadata.cpp
-    include/tev/imageio/Jpeg2000ImageLoader.h src/imageio/Jpeg2000ImageLoader.cpp
-    include/tev/imageio/JpegTurboImageLoader.h src/imageio/JpegTurboImageLoader.cpp
-    include/tev/imageio/JpegTurboImageSaver.h src/imageio/JpegTurboImageSaver.cpp
     include/tev/imageio/PfmImageLoader.h src/imageio/PfmImageLoader.cpp
-    include/tev/imageio/PngImageLoader.h src/imageio/PngImageLoader.cpp
-    include/tev/imageio/PngImageSaver.h src/imageio/PngImageSaver.cpp
     include/tev/imageio/QoiImageLoader.h src/imageio/QoiImageLoader.cpp
     include/tev/imageio/QoiImageSaver.h src/imageio/QoiImageSaver.cpp
-    include/tev/imageio/RawImageLoader.h src/imageio/RawImageLoader.cpp
     include/tev/imageio/StbiHdrImageSaver.h src/imageio/StbiHdrImageSaver.cpp
     include/tev/imageio/StbiImageLoader.h src/imageio/StbiImageLoader.cpp
     include/tev/imageio/StbiLdrImageSaver.h src/imageio/StbiLdrImageSaver.cpp
-    include/tev/imageio/TiffImageLoader.h src/imageio/TiffImageLoader.cpp
-    include/tev/imageio/WebpImageLoader.h src/imageio/WebpImageLoader.cpp
-    include/tev/imageio/Xmp.h src/imageio/Xmp.cpp
 
     include/tev/BackgroundImagesLoader.h src/BackgroundImagesLoader.cpp
     include/tev/Box.h src/Box.cpp
@@ -193,10 +193,28 @@ set(TEV_SOURCES
     include/tev/ThreadPool.h src/ThreadPool.cpp
     include/tev/UberShader.h src/UberShader.cpp
     include/tev/VectorGraphics.h src/VectorGraphics.cpp
-    include/tev/WaylandClipboard.h src/WaylandClipboard.cpp
 
     src/main.cpp
 )
+if (NOT EMSCRIPTEN)
+    list(APPEND TEV_SOURCES
+        include/tev/imageio/ClipboardImageLoader.h src/imageio/ClipboardImageLoader.cpp
+        include/tev/imageio/Demosaic.h src/imageio/Demosaic.cpp
+        include/tev/imageio/Exif.h src/imageio/Exif.cpp
+        include/tev/imageio/Ifd.h src/imageio/Ifd.cpp
+        include/tev/imageio/IsoGainMapMetadata.h src/imageio/IsoGainMapMetadata.cpp
+        include/tev/imageio/Jpeg2000ImageLoader.h src/imageio/Jpeg2000ImageLoader.cpp
+        include/tev/imageio/JpegTurboImageLoader.h src/imageio/JpegTurboImageLoader.cpp
+        include/tev/imageio/JpegTurboImageSaver.h src/imageio/JpegTurboImageSaver.cpp
+        include/tev/imageio/PngImageLoader.h src/imageio/PngImageLoader.cpp
+        include/tev/imageio/PngImageSaver.h src/imageio/PngImageSaver.cpp
+        include/tev/imageio/RawImageLoader.h src/imageio/RawImageLoader.cpp
+        include/tev/imageio/TiffImageLoader.h src/imageio/TiffImageLoader.cpp
+        include/tev/imageio/WebpImageLoader.h src/imageio/WebpImageLoader.cpp
+        include/tev/imageio/Xmp.h src/imageio/Xmp.cpp
+        include/tev/WaylandClipboard.h src/WaylandClipboard.cpp
+    )
+endif()
 if (MSVC)
     list(APPEND TEV_SOURCES resources/windows/icon.rc)
     list(APPEND TEV_SOURCES resources/windows/tev.manifest)
@@ -269,16 +287,20 @@ endif()
 
 target_compile_definitions(tev PRIVATE ${TEV_DEFINITIONS})
 
-set(TEV_LIBS clip exif_static jpeg-turbo libraw::libraw_r nanogui OpenEXR::OpenEXR openjpeg-tev png_static tiff webpdemux XMPCore)
-if (MSVC)
-    list(APPEND TEV_LIBS DirectXTex wsock32 ws2_32)
-endif()
-if (TEV_USE_LIBHEIF)
-    list(APPEND TEV_LIBS lcms2-tev heif)
-endif()
-if (TEV_SUPPORT_JXL)
-    # jxl_dec for decoding, jxl_extras for gain maps, jxl_threads for threading support
-    list(APPEND TEV_LIBS jxl jxl_dec jxl_extras_nocodec-internal jxl_threads)
+if (EMSCRIPTEN)
+    set(TEV_LIBS nanogui OpenEXR::OpenEXR lcms2-tev)
+else()
+    set(TEV_LIBS clip exif_static jpeg-turbo libraw::libraw_r nanogui OpenEXR::OpenEXR openjpeg-tev png_static tiff webpdemux XMPCore)
+    if (MSVC)
+        list(APPEND TEV_LIBS DirectXTex wsock32 ws2_32)
+    endif()
+    if (TEV_USE_LIBHEIF)
+        list(APPEND TEV_LIBS lcms2-tev heif)
+    endif()
+    if (TEV_SUPPORT_JXL)
+        # jxl_dec for decoding, jxl_extras for gain maps, jxl_threads for threading support
+        list(APPEND TEV_LIBS jxl jxl_dec jxl_extras_nocodec-internal jxl_threads)
+    endif()
 endif()
 
 target_link_libraries(tev ${TEV_LIBS})
@@ -310,6 +332,27 @@ elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "
         # Coroutines need to be explicitly enabled on g++
         target_compile_options(tev PRIVATE -fcoroutines)
     endif()
+endif()
+
+if (EMSCRIPTEN)
+    target_compile_definitions(tev PRIVATE -DTEV_MINIMAL_FORMATS)
+    target_compile_options(tev PRIVATE -pthread -fexceptions)
+    set_target_properties(tev PROPERTIES SUFFIX ".html")
+    target_link_options(tev PRIVATE
+        -pthread
+        -sPTHREAD_POOL_SIZE=4
+        -sALLOW_MEMORY_GROWTH=1
+        -sUSE_GLFW=3
+        -sMIN_WEBGL_VERSION=2
+        -sMAX_WEBGL_VERSION=2
+        -sFORCE_FILESYSTEM=1
+        -sINITIAL_MEMORY=256MB
+        -sSTACK_SIZE=1MB
+        -sNO_EXIT_RUNTIME=1
+        -sEXPORTED_RUNTIME_METHODS=ccall
+        -fexceptions
+        --shell-file=${CMAKE_CURRENT_SOURCE_DIR}/resources/emscripten/shell.html
+    )
 endif()
 
 set(CPACK_PACKAGE_VENDOR "Tom94 (Thomas Müller)")

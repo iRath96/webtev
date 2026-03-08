@@ -17,20 +17,23 @@
  */
 
 #include <tev/imageio/BmpImageLoader.h>
-#include <tev/imageio/ClipboardImageLoader.h>
 #include <tev/imageio/EmptyImageLoader.h>
 #include <tev/imageio/ExrImageLoader.h>
 #include <tev/imageio/IcoImageLoader.h>
 #include <tev/imageio/ImageLoader.h>
-#include <tev/imageio/Jpeg2000ImageLoader.h>
-#include <tev/imageio/JpegTurboImageLoader.h>
 #include <tev/imageio/PfmImageLoader.h>
-#include <tev/imageio/PngImageLoader.h>
 #include <tev/imageio/QoiImageLoader.h>
-#include <tev/imageio/RawImageLoader.h>
 #include <tev/imageio/StbiImageLoader.h>
-#include <tev/imageio/TiffImageLoader.h>
-#include <tev/imageio/WebpImageLoader.h>
+
+#ifndef TEV_MINIMAL_FORMATS
+#    include <tev/imageio/ClipboardImageLoader.h>
+#    include <tev/imageio/Jpeg2000ImageLoader.h>
+#    include <tev/imageio/JpegTurboImageLoader.h>
+#    include <tev/imageio/PngImageLoader.h>
+#    include <tev/imageio/RawImageLoader.h>
+#    include <tev/imageio/TiffImageLoader.h>
+#    include <tev/imageio/WebpImageLoader.h>
+#endif
 
 #ifdef _WIN32
 #    include <tev/imageio/DdsImageLoader.h>
@@ -56,7 +59,6 @@ const vector<unique_ptr<ImageLoader>>& ImageLoader::getLoaders() {
         vector<unique_ptr<ImageLoader>> imageLoaders;
         imageLoaders.emplace_back(new ExrImageLoader());
         imageLoaders.emplace_back(new PfmImageLoader());
-        imageLoaders.emplace_back(new ClipboardImageLoader());
         imageLoaders.emplace_back(new EmptyImageLoader());
 #ifdef _WIN32
         imageLoaders.emplace_back(new DdsImageLoader());
@@ -68,12 +70,15 @@ const vector<unique_ptr<ImageLoader>>& ImageLoader::getLoaders() {
         imageLoaders.emplace_back(new JxlImageLoader());
 #endif
         imageLoaders.emplace_back(new QoiImageLoader());
+#ifndef TEV_MINIMAL_FORMATS
+        imageLoaders.emplace_back(new ClipboardImageLoader());
         imageLoaders.emplace_back(new WebpImageLoader());
         imageLoaders.emplace_back(new Jpeg2000ImageLoader());
         imageLoaders.emplace_back(new JpegTurboImageLoader());
         imageLoaders.emplace_back(new PngImageLoader());
         imageLoaders.emplace_back(new RawImageLoader());
         imageLoaders.emplace_back(new TiffImageLoader());
+#endif
         imageLoaders.emplace_back(new BmpImageLoader());
         imageLoaders.emplace_back(new IcoImageLoader());
         imageLoaders.emplace_back(new StbiImageLoader());

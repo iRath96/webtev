@@ -52,6 +52,8 @@ using namespace std;
 
 namespace tev {
 
+#ifndef __EMSCRIPTEN__
+
 enum SocketError : int {
 #ifdef _WIN32
     Again = EAGAIN,
@@ -854,5 +856,25 @@ void Ipc::SocketConnection::close() {
 }
 
 bool Ipc::SocketConnection::isClosed() const { return mSocketFd == INVALID_SOCKET; }
+
+#else // __EMSCRIPTEN__
+
+Ipc::Ipc(string_view) : mIsPrimaryInstance{true}, mSocketFd{INVALID_SOCKET} {}
+
+Ipc::~Ipc() {}
+
+bool Ipc::attemptToBecomePrimaryInstance() { return true; }
+
+void Ipc::sendToPrimaryInstance(const IpcPacket&) {}
+
+void Ipc::receiveFromSecondaryInstance(function<void(const IpcPacket&)>) {}
+
+void Ipc::sendRemainingDataAndDisconnectFromPrimaryInstance() {}
+
+bool Ipc::isConnectedToPrimaryInstance() const { return false; }
+
+string Ipc::hostname() const { return ""; }
+
+#endif // __EMSCRIPTEN__
 
 } // namespace tev

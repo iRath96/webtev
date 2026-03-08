@@ -19,7 +19,9 @@
 #include <tev/ThreadPool.h>
 #include <tev/imageio/BmpImageLoader.h>
 #include <tev/imageio/IcoImageLoader.h>
-#include <tev/imageio/PngImageLoader.h>
+#ifndef TEV_MINIMAL_FORMATS
+#    include <tev/imageio/PngImageLoader.h>
+#endif
 
 using namespace nanogui;
 using namespace std;
@@ -146,8 +148,12 @@ Task<vector<ImageData>> IcoImageLoader::load(
                 throw FormatNotSupported{"Failed to seek to image data."};
             }
 
+#ifndef TEV_MINIMAL_FORMATS
             const auto pngLoader = PngImageLoader{};
             imageData = co_await pngLoader.load(iStream, path, channelSelector, settings, priority);
+#else
+            throw FormatNotSupported{"PNG loading not available in this build."};
+#endif
         } catch (const FormatNotSupported&) { tlog::debug("Not a PNG image; trying BMP.", i); } catch (const ImageLoadError& e) {
             tlog::warning("Malformed PNG image: {}", i, e.what());
             continue;
