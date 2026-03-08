@@ -86,6 +86,21 @@ app.get('/api/sessions/:sessionId/files/:filename', (req, res) => {
     fs.createReadStream(filePath).pipe(res);
 });
 
+// --- File delete ---
+app.delete('/api/sessions/:sessionId/files/:filename', (req, res) => {
+    const { sessionId, filename } = req.params;
+    if (!isValidSessionId(sessionId)) return res.status(400).send('Invalid session ID');
+
+    const safeName = sanitizeFilename(filename);
+    if (!safeName) return res.status(400).send('Invalid filename');
+
+    const filePath = path.join(SESSIONS_DIR, sessionId, safeName);
+    try {
+        fs.unlinkSync(filePath);
+    } catch (_) {}
+    res.status(200).send('OK');
+});
+
 // --- WebSocket session management ---
 // Map<sessionId, Set<ws>>
 const sessions = new Map();
@@ -124,6 +139,19 @@ wss.on('connection', (ws) => {
                 type: 'file_available',
                 filename: msg.filename,
                 size: msg.size,
+            });
+            for (const peer of peers) {
+                if (peer !== ws && peer.readyState === 1) {
+                    peer.send(broadcast);
+                }
+            }
+        } else if (msg.type === 'file_removed' && sessionId) {
+            // Broadcast removal to other clients in the same session
+            const peers = sessions.get(sessionId);
+            if (!peers) return;
+            const broadcast = JSON.stringify({
+                type: 'file_removed',
+                filename: msg.filename,
             });
             for (const peer of peers) {
                 if (peer !== ws && peer.readyState === 1) {

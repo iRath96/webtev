@@ -342,6 +342,7 @@ if (EMSCRIPTEN)
         -pthread
         -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency+4
         -sALLOW_MEMORY_GROWTH=1
+        -sMAXIMUM_MEMORY=4GB
         -sUSE_GLFW=3
         -sMIN_WEBGL_VERSION=2
         -sMAX_WEBGL_VERSION=2

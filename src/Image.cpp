@@ -828,9 +828,18 @@ Texture* Image::texture(span<const string> channelNames, EInterpolationMode minF
 
     Texture::PixelFormat pixelFormat;
     switch (channelNames.size()) {
+#ifdef __EMSCRIPTEN__
+        // WebGL 2 compiled as GLES 2: GL_LUMINANCE/GL_LUMINANCE_ALPHA are incompatible with
+        // sized internal formats (GL_R16F, GL_RG16F), and RGB16F/RGB32F are not color-renderable
+        // (breaks glGenerateMipmap for trilinear). Promote everything to RGBA.
+        case 1: pixelFormat = Texture::PixelFormat::RGBA; break;
+        case 2: pixelFormat = Texture::PixelFormat::RGBA; break;
+        case 3: pixelFormat = Texture::PixelFormat::RGBA; break;
+#else
         case 1: pixelFormat = Texture::PixelFormat::R; break;
         case 2: pixelFormat = Texture::PixelFormat::RA; break;
         case 3: pixelFormat = Texture::PixelFormat::RGB; break;
+#endif
         case 4: pixelFormat = Texture::PixelFormat::RGBA; break;
         default: throw runtime_error{"Unsupported number of channels for texture."};
     }

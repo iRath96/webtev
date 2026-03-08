@@ -78,6 +78,14 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tev_clear_transfer_progress(const char* fil
     if (!sImageViewer) return;
     sImageViewer->clearTransferProgress(filename);
 }
+
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_remove_image(const char* path) {
+    if (!sImageViewer) return;
+    sImageViewer->scheduleToUiThread([pathStr = string(path)] {
+        sImageViewer->removeImageByPath(pathStr);
+    });
+    sImageViewer->redraw();
+}
 #endif
 static atomic<bool> imageViewerIsReady = false;
 

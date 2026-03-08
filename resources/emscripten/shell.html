@@ -133,6 +133,17 @@
                             self.downloadQueue.push({ filename: msg.filename, size: msg.size });
                             self.processDownloadQueue();
                         }
+                    } else if (msg.type === 'file_removed') {
+                        self.knownFiles.delete(msg.filename);
+                        /* Remove from download queue if pending */
+                        self.downloadQueue = self.downloadQueue.filter(function(item) {
+                            return item.filename !== msg.filename;
+                        });
+                        /* Tell C++ to close the image */
+                        var vfsPath = '/.glfw_dropped_files/' + msg.filename;
+                        Module.ccall('tev_remove_image', null, ['string'], [vfsPath]);
+                        /* Clean up VFS */
+                        try { FS.unlink(vfsPath); } catch (_) {}
                     }
                 };
 
@@ -291,6 +302,26 @@
         window.tevOnImageSelected = function(filename) {
             TevSync.selectedImage = filename;
             TevSync.processDownloadQueue();
+        };
+
+        /* Called from C++ EM_ASM when an image is closed/removed */
+        window.tevOnImageRemoved = function(filename) {
+            TevSync.knownFiles.delete(filename);
+
+            /* Delete from server */
+            var xhr = new XMLHttpRequest();
+            var url = '/api/sessions/' + encodeURIComponent(TevSync.sessionId) +
+                      '/files/' + encodeURIComponent(filename);
+            xhr.open('DELETE', url);
+            xhr.send();
+
+            /* Notify peers */
+            if (TevSync.ws && TevSync.ws.readyState === 1) {
+                TevSync.ws.send(JSON.stringify({
+                    type: 'file_removed',
+                    filename: filename
+                }));
+            }
         };
 
         /* Start sync after WASM is ready */

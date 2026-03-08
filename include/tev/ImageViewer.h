@@ -82,6 +82,9 @@ public:
 
     void removeImage(std::shared_ptr<Image> image);
     void removeImage(std::string_view imageName) { removeImage(imageByName(imageName)); }
+#ifdef __EMSCRIPTEN__
+    void removeImageByPath(const std::filesystem::path& path);
+#endif
     void removeAllImages();
 
     void replaceImage(std::shared_ptr<Image> image, std::shared_ptr<Image> replacement, bool shallSelect);
@@ -388,6 +391,7 @@ private:
         bool isUpload;
     };
     std::unordered_map<std::string, TransferState> mPendingTransfers;
+    bool mSuppressRemovalNotification = false;
 #endif
 };
 

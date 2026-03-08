@@ -1576,11 +1576,38 @@ void ImageViewer::moveImageInList(size_t oldIndex, size_t newIndex) {
     requestLayoutUpdate();
 }
 
+#ifdef __EMSCRIPTEN__
+void ImageViewer::removeImageByPath(const filesystem::path& path) {
+    shared_ptr<Image> found;
+    for (const auto& img : mImages) {
+        if (img->path() == path) {
+            found = img;
+            break;
+        }
+    }
+    if (!found) return;
+    mSuppressRemovalNotification = true;
+    removeImage(found);
+    mSuppressRemovalNotification = false;
+}
+#endif
+
 void ImageViewer::removeImage(shared_ptr<Image> image) {
     const auto id = imageId(image);
     if (!id) {
         return;
     }
+
+#ifdef __EMSCRIPTEN__
+    if (!mSuppressRemovalNotification) {
+        const auto filename = image->path().filename().string();
+        EM_ASM({
+            if (window.tevOnImageRemoved) {
+                window.tevOnImageRemoved(UTF8ToString($0));
+            }
+        }, filename.c_str());
+    }
+#endif
 
     if (mDragType == EMouseDragType::ImageButtonDrag) {
         // If we're currently dragging the to-be-removed image, stop.
