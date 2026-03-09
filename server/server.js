@@ -161,6 +161,15 @@ wss.on('connection', (ws) => {
                     peer.send(broadcast);
                 }
             }
+        } else if (msg.type === 'cursor' && sessionId) {
+            // Ephemeral cursor position — broadcast to other peers only, not stored
+            const peers = sessions.get(sessionId);
+            if (!peers) return;
+            const otherPeers = [...peers].filter(p => p !== ws && p.readyState === 1);
+            const broadcast = JSON.stringify(msg);
+            for (const peer of otherPeers) {
+                peer.send(broadcast);
+            }
         }
     });
 

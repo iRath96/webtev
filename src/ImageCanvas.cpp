@@ -536,6 +536,94 @@ void ImageCanvas::draw(NVGcontext* ctx) {
     if (m_pos.x() != 0) {
         drawEdgeShadows(ctx);
     }
+
+    drawRemoteCursors(ctx);
+}
+
+void ImageCanvas::drawRemoteCursors(NVGcontext* ctx) {
+    using namespace std::chrono;
+
+    // Reset scissor and transform so we can draw cursors anywhere on screen
+    // (including over the sidebar, which is outside ImageCanvas's clipping region)
+    nvgSave(ctx);
+    nvgResetScissor(ctx);
+    nvgResetTransform(ctx);
+
+    static const Color CURSOR_COLORS[] = {
+        {0.3f, 0.7f, 1.0f, 1.0f},  // blue
+        {1.0f, 0.4f, 0.4f, 1.0f},  // red
+        {0.4f, 0.9f, 0.4f, 1.0f},  // green
+        {1.0f, 0.7f, 0.2f, 1.0f},  // orange
+        {0.8f, 0.4f, 1.0f, 1.0f},  // purple
+        {0.2f, 0.9f, 0.9f, 1.0f},  // cyan
+    };
+    constexpr int NUM_COLORS = 6;
+
+    auto now = steady_clock::now();
+    bool needsRedraw = false;
+
+    for (auto& cursor : mRemoteCursors) {
+        float elapsed = duration_cast<milliseconds>(now - cursor.lastUpdate).count() / 1000.0f;
+        float opacity = elapsed < 10.0f ? 1.0f : std::max(0.0f, 1.0f - (elapsed - 10.0f));
+        if (opacity <= 0.0f) continue;
+        if (opacity < 1.0f) needsRedraw = true;
+
+        // Compute absolute screen position
+        Vector2f screenPos;
+        if (cursor.inSidebar) {
+            // Sidebar coords are already absolute screen coords
+            screenPos = {cursor.x, cursor.y};
+        } else {
+            if (!mImage) continue;
+            // textureToNanogui returns widget-local coords; add absolute_position for screen coords
+            screenPos = Vector2f{absolute_position()} + textureToNanogui(mImage.get()) * Vector2f{cursor.x, cursor.y};
+        }
+
+        // Pick color from clientId hash
+        uint32_t hash = 0;
+        for (char c : cursor.clientId) hash = hash * 31 + (uint8_t)c;
+        Color col = CURSOR_COLORS[hash % NUM_COLORS];
+
+        float radius = 5.0f;
+
+        nvgSave(ctx);
+
+        // Filled circle
+        nvgBeginPath(ctx);
+        nvgCircle(ctx, screenPos.x(), screenPos.y(), radius);
+        nvgFillColor(ctx, {{{col.r(), col.g(), col.b(), 0.5f * opacity}}});
+        nvgFill(ctx);
+
+        // White stroke
+        nvgStrokeColor(ctx, {{{1.0f, 1.0f, 1.0f, 0.9f * opacity}}});
+        nvgStrokeWidth(ctx, 1.5f);
+        nvgStroke(ctx);
+
+        // Label (first 3 chars of clientId)
+        string label = cursor.clientId.substr(0, 3);
+        nvgFontFace(ctx, "sans");
+        nvgFontSize(ctx, 12.0f);
+        nvgTextAlign(ctx, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
+
+        // Shadow
+        nvgFontBlur(ctx, 2);
+        nvgFillColor(ctx, {{{0.0f, 0.0f, 0.0f, 0.6f * opacity}}});
+        nvgText(ctx, screenPos.x() + 1, screenPos.y() + radius + 3, label.c_str(), nullptr);
+
+        // Text
+        nvgFontBlur(ctx, 0);
+        nvgFillColor(ctx, {{{col.r(), col.g(), col.b(), opacity}}});
+        nvgText(ctx, screenPos.x(), screenPos.y() + radius + 2, label.c_str(), nullptr);
+
+        nvgRestore(ctx);
+    }
+
+    // Keep redrawing while cursors are fading
+    if (needsRedraw) {
+        screen()->redraw();
+    }
+
+    nvgRestore(ctx);
 }
 
 void ImageCanvas::translate(Vector2f amount) { mTransform = Matrix3f::translate(amount) * mTransform; }

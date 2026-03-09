@@ -1,5 +1,6 @@
 # Build artifacts
 /build*
+/server/tev.*
 /x64
 _CPack_Packages
 

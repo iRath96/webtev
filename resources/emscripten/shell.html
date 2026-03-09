@@ -117,12 +117,16 @@
             /* State sync */
             inflightStateId: null,
             lastStateJson: null,
+            nextValidSendTime: 0,
             stateSendTimer: null,
             statePoller: null,
             suppressUntil: 0,
             pendingRemoteState: null,
             DEBOUNCE_MS: 250,
             STATE_POLL_MS: 100,
+
+            /* Cursor sync */
+            clientId: generateFileId(),
 
             connect: function() {
                 var self = this;
@@ -145,9 +149,9 @@
 
                     if (msg.type === 'ui_state') {
                         self.handleRemoteState(msg);
+                    } else if (msg.type === 'cursor') {
+                        self.handleRemoteCursor(msg);
                     }
-                    /* session_files no longer drives downloads —
-                       file reconciliation is handled by ui_state */
                 };
 
                 self.ws.onclose = function() {
@@ -280,20 +284,22 @@
 
                     if (stateJson === self.lastStateJson) return;
 
-                    /* State changed — schedule debounced send */
-                    if (self.inflightStateId !== null) return;
+                    self.inflightStateId = generateFileId();
+                    self.lastStateJson = stateJson;
 
-                    /* Only reschedule the debounce timer if the state is still
-                       actively changing (e.g. slider drag). If it stabilized
-                       since the last poll, let the existing timer fire. */
-                    if (stateJson !== self._prevPollState) {
-                        if (self.stateSendTimer) clearTimeout(self.stateSendTimer);
-                        self.stateSendTimer = setTimeout(function() {
-                            self.stateSendTimer = null;
-                            self.sendState();
-                        }, self.DEBOUNCE_MS);
-                    }
-                    self._prevPollState = stateJson;
+                    console.log("have timer");
+                    if (self.stateSendTimer) return;
+                    console.log("  no!");
+                    
+                    const timeNow = new Date().getTime();
+                    const timeDelta = Math.max(self.nextValidSendTime - timeNow, 0);
+                    self.nextValidSendTime = timeNow + self.DEBOUNCE_MS;
+                    
+                    console.log("  delta ", timeDelta);
+                    self.stateSendTimer = setTimeout(function() {
+                        self.stateSendTimer = null;
+                        self.sendState();
+                    }, timeDelta);
                 }, self.STATE_POLL_MS);
             },
 
@@ -301,7 +307,7 @@
                 var self = this;
                 if (!self.ws || self.ws.readyState !== 1) return;
 
-                var stateJson = Module.ccall('tev_get_ui_state', 'string', [], []);
+                var stateJson = self.lastStateJson;
                 var state;
                 try { state = JSON.parse(stateJson); } catch (_) { return; }
 
@@ -324,9 +330,6 @@
                     state.referenceImage = refId || null;
                 }
 
-                var stateId = generateFileId();
-                self.inflightStateId = stateId;
-                self.lastStateJson = stateJson;
                 /* Only clear pending remote state once all downloads are done —
                    otherwise captions/selection from the remote state are lost */
                 if (self.activeDownloads === 0 && self.downloadQueue.length === 0) {
@@ -335,9 +338,51 @@
 
                 self.ws.send(JSON.stringify({
                     type: 'ui_state',
-                    stateId: stateId,
+                    stateId: self.inflightStateId,
                     state: state
                 }));
+            },
+
+            /* ── Cursor sync ────────────────────────────────────── */
+
+            sendCursor: function(screenX, screenY) {
+                var self = this;
+                if (!self.ws || self.ws.readyState !== 1) return;
+
+                var sidebarW = Module.ccall('tev_get_sidebar_width', 'number', [], []);
+                var msg = { type: 'cursor', clientId: self.clientId };
+
+                if (screenX < sidebarW) {
+                    msg.region = 'sidebar';
+                    msg.x = screenX;
+                    msg.y = screenY;
+                } else {
+                    var relX = screenX - sidebarW;
+                    var relY = screenY;
+                    var coordsJson = Module.ccall('tev_get_cursor_image_coords', 'string',
+                        ['number', 'number'], [relX, relY]);
+                    if (coordsJson !== 'null') {
+                        var coords = JSON.parse(coordsJson);
+                        msg.region = 'image';
+                        msg.imageX = coords[0];
+                        msg.imageY = coords[1];
+                    } else {
+                        msg.region = 'sidebar';
+                        msg.x = screenX;
+                        msg.y = screenY;
+                    }
+                }
+
+                self.ws.send(JSON.stringify(msg));
+            },
+
+            handleRemoteCursor: function(msg) {
+                Module.ccall('tev_set_remote_cursor', null,
+                    ['string', 'number', 'number', 'number', 'number', 'number'],
+                    [msg.clientId,
+                     msg.region === 'sidebar' ? 1 : 0,
+                     msg.x || 0, msg.y || 0,
+                     msg.imageX || 0, msg.imageY || 0]);
             },
 
             /* ── File upload / download ──────────────────────────── */
@@ -517,6 +562,21 @@
             TevSync.connect();
             TevSync.startStateSync();
         });
+
+        /* ── Cursor tracking ──────────────────────────────────── */
+        // Poll cursor position from emscripten's Browser object every 50ms.
+        // Event listeners don't work reliably with emscripten's GLFW event handling.
+        (function() {
+            var lastX = -1, lastY = -1;
+            setInterval(function() {
+                if (typeof Browser === 'undefined' || typeof TevSync === 'undefined') return;
+                var x = Browser.mouseX, y = Browser.mouseY;
+                if (x !== lastX || y !== lastY) {
+                    lastX = x; lastY = y;
+                    TevSync.sendCursor(x, y);
+                }
+            }, 50);
+        })();
 
         /* ── Custom drop handler ──────────────────────────────── */
         (function() {

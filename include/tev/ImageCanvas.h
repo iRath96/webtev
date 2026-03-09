@@ -26,11 +26,19 @@
 
 #include <nanogui/canvas.h>
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <unordered_map>
 
 namespace tev {
+
+struct RemoteCursor {
+    std::string clientId;
+    bool inSidebar = false;
+    float x = 0, y = 0; // sidebar: absolute screen coords; image: image-space coords
+    std::chrono::steady_clock::time_point lastUpdate;
+};
 
 struct CanvasStatistics {
     float mean;
@@ -120,6 +128,9 @@ public:
     float pixelRatio() const { return mPixelRatio; }
     void setPixelRatio(float ratio) { mPixelRatio = ratio; }
 
+    std::vector<RemoteCursor>& remoteCursors() { return mRemoteCursors; }
+    nanogui::Matrix3f textureToNanogui(const Image* image);
+
     chroma_t inspectionChroma() const { return mInspectionChroma; }
     void setInspectionChroma(const chroma_t& chroma) { mInspectionChroma = chroma; }
 
@@ -152,12 +163,12 @@ private:
     void drawPixelValuesAsText(NVGcontext* ctx);
     void drawCoordinateSystem(NVGcontext* ctx);
     void drawEdgeShadows(NVGcontext* ctx);
+    void drawRemoteCursors(NVGcontext* ctx);
 
     nanogui::Vector2f pixelOffset(nanogui::Vector2i size) const;
 
     // Assembles the transform from canonical space to the [-1, 1] square for the current image.
     nanogui::Matrix3f transform(const Image* image);
-    nanogui::Matrix3f textureToNanogui(const Image* image);
     nanogui::Matrix3f displayWindowToNanogui(const Image* image);
 
     float mPixelRatio = 1;
@@ -192,6 +203,8 @@ private:
     ituth273::ETransfer mInspectionTransfer = ituth273::ETransfer::Linear;
     bool mInspectionAdaptWhitePoint = false;
     bool mInspectionPremultipliedAlpha = true;
+
+    std::vector<RemoteCursor> mRemoteCursors;
 };
 
 } // namespace tev

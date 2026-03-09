@@ -88,6 +88,47 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tev_remove_image(const char* path) {
     sImageViewer->redraw();
 }
 
+extern "C" EMSCRIPTEN_KEEPALIVE int tev_get_sidebar_width() {
+    if (!sImageViewer) return 0;
+    return sImageViewer->isUiVisible() ? sImageViewer->sidebarWidth() : 0;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* tev_get_cursor_image_coords(float canvasRelX, float canvasRelY) {
+    static string buf;
+    if (!sImageViewer || !sImageViewer->currentImage()) {
+        buf = "null";
+        return buf.c_str();
+    }
+    auto* c = sImageViewer->imageCanvas();
+    auto imagePos = inverse(c->textureToNanogui(sImageViewer->currentImage().get())) * nanogui::Vector2f{canvasRelX, canvasRelY};
+    buf = format("[{},{}]", imagePos.x(), imagePos.y());
+    return buf.c_str();
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_set_remote_cursor(const char* clientId, int inSidebar, float x, float y, float imageX, float imageY) {
+    if (!sImageViewer) return;
+    auto* c = sImageViewer->imageCanvas();
+    auto& cursors = c->remoteCursors();
+
+    // Find existing or create new
+    RemoteCursor* found = nullptr;
+    for (auto& cur : cursors) {
+        if (cur.clientId == clientId) { found = &cur; break; }
+    }
+    if (!found) {
+        cursors.push_back({});
+        found = &cursors.back();
+        found->clientId = clientId;
+    }
+
+    found->inSidebar = inSidebar != 0;
+    found->x = found->inSidebar ? x : imageX;
+    found->y = found->inSidebar ? y : imageY;
+    found->lastUpdate = chrono::steady_clock::now();
+
+    sImageViewer->redraw();
+}
+
 static string jsonEscapeString(string_view s) {
     string out;
     out.reserve(s.size() + 2);
