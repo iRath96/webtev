@@ -105,6 +105,37 @@ const sessions = new Map();
 const sessionUiState = new Map();
 // Map<sessionId, timeout> — delayed cleanup of UI state after all clients leave
 const sessionCleanupTimers = new Map();
+// Map<sessionId, timeout> — throttled disk writes for UI state
+const uiStateWriteTimers = new Map();
+// Map<sessionId, object> — pending state to write on next tick
+const uiStatePending = new Map();
+
+function persistUiState(sessionId, state) {
+    uiStatePending.set(sessionId, state);
+    // If a timer is already running, it will pick up the latest pending state
+    if (uiStateWriteTimers.has(sessionId)) return;
+    uiStateWriteTimers.set(sessionId, setTimeout(() => {
+        uiStateWriteTimers.delete(sessionId);
+        const pending = uiStatePending.get(sessionId);
+        if (!pending) return;
+        uiStatePending.delete(sessionId);
+        const sessionDir = path.join(SESSIONS_DIR, sessionId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'ui_state.json');
+        try {
+            fs.writeFileSync(statePath, JSON.stringify(pending));
+        } catch (_) {}
+    }, 10000));
+}
+
+function loadUiState(sessionId) {
+    const statePath = path.join(SESSIONS_DIR, sessionId, 'ui_state.json');
+    try {
+        return JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    } catch (_) {
+        return null;
+    }
+}
 
 wss.on('connection', (ws) => {
     let sessionId = null;
@@ -143,14 +174,19 @@ wss.on('connection', (ws) => {
             }
             ws.send(JSON.stringify({ type: 'session_files', files }));
 
-            // Send stored UI state if available
-            const savedState = sessionUiState.get(sessionId);
+            // Send stored UI state if available (memory first, then disk)
+            let savedState = sessionUiState.get(sessionId);
+            if (!savedState) {
+                savedState = loadUiState(sessionId);
+                if (savedState) sessionUiState.set(sessionId, savedState);
+            }
             if (savedState) {
                 ws.send(JSON.stringify(savedState));
             }
         } else if (msg.type === 'ui_state' && sessionId) {
-            // Store latest state
+            // Store latest state in memory and persist to disk
             sessionUiState.set(sessionId, msg);
+            persistUiState(sessionId, msg);
 
             // Broadcast to ALL clients (including sender for echo-based confirmation)
             const peers = sessions.get(sessionId);
