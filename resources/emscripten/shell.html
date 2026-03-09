@@ -287,15 +287,11 @@
                     self.inflightStateId = generateFileId();
                     self.lastStateJson = stateJson;
 
-                    console.log("have timer");
                     if (self.stateSendTimer) return;
-                    console.log("  no!");
                     
                     const timeNow = new Date().getTime();
                     const timeDelta = Math.max(self.nextValidSendTime - timeNow, 0);
                     self.nextValidSendTime = timeNow + self.DEBOUNCE_MS;
-                    
-                    console.log("  delta ", timeDelta);
                     self.stateSendTimer = setTimeout(function() {
                         self.stateSendTimer = null;
                         self.sendState();
