@@ -599,21 +599,21 @@ void ImageCanvas::drawRemoteCursors(NVGcontext* ctx) {
         nvgStrokeWidth(ctx, 1.5f);
         nvgStroke(ctx);
 
-        // Label (first 3 chars of clientId)
-        string label = cursor.clientId.substr(0, 3);
-        nvgFontFace(ctx, "sans");
-        nvgFontSize(ctx, 12.0f);
-        nvgTextAlign(ctx, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
+        // // Label (first 3 chars of clientId)
+        // string label = cursor.clientId.substr(0, 3);
+        // nvgFontFace(ctx, "sans");
+        // nvgFontSize(ctx, 12.0f);
+        // nvgTextAlign(ctx, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
 
-        // Shadow
-        nvgFontBlur(ctx, 2);
-        nvgFillColor(ctx, {{{0.0f, 0.0f, 0.0f, 0.6f * opacity}}});
-        nvgText(ctx, screenPos.x() + 1, screenPos.y() + radius + 3, label.c_str(), nullptr);
+        // // Shadow
+        // nvgFontBlur(ctx, 2);
+        // nvgFillColor(ctx, {{{0.0f, 0.0f, 0.0f, 0.6f * opacity}}});
+        // nvgText(ctx, screenPos.x() + 1, screenPos.y() + radius + 3, label.c_str(), nullptr);
 
-        // Text
-        nvgFontBlur(ctx, 0);
-        nvgFillColor(ctx, {{{col.r(), col.g(), col.b(), opacity}}});
-        nvgText(ctx, screenPos.x(), screenPos.y() + radius + 2, label.c_str(), nullptr);
+        // // Text
+        // nvgFontBlur(ctx, 0);
+        // nvgFillColor(ctx, {{{col.r(), col.g(), col.b(), opacity}}});
+        // nvgText(ctx, screenPos.x(), screenPos.y() + radius + 2, label.c_str(), nullptr);
 
         nvgRestore(ctx);
     }
