@@ -56,6 +56,9 @@ public:
     void scale(float amount, nanogui::Vector2f origin);
     float scale() const { return extractScale(mTransform); }
 
+    nanogui::Vector2f viewCenter() const;
+    void setViewState(float scale, nanogui::Vector2f imageCenter);
+
     void setExposure(float exposure) { mExposure = exposure; }
     void setOffset(float offset) { mOffset = offset; }
     void setGamma(float gamma) { mGamma = gamma; }

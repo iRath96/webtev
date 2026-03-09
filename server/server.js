@@ -101,6 +101,10 @@ app.delete('/api/sessions/:sessionId/files/:fileId', (req, res) => {
 // --- WebSocket session management ---
 // Map<sessionId, Set<ws>>
 const sessions = new Map();
+// Map<sessionId, object> — latest UI state per session
+const sessionUiState = new Map();
+// Map<sessionId, timeout> — delayed cleanup of UI state after all clients leave
+const sessionCleanupTimers = new Map();
 
 wss.on('connection', (ws) => {
     let sessionId = null;
@@ -113,6 +117,12 @@ wss.on('connection', (ws) => {
             sessionId = msg.sessionId;
             if (!sessions.has(sessionId)) sessions.set(sessionId, new Set());
             sessions.get(sessionId).add(ws);
+
+            // Cancel any pending cleanup timer (e.g. after page reload)
+            if (sessionCleanupTimers.has(sessionId)) {
+                clearTimeout(sessionCleanupTimers.get(sessionId));
+                sessionCleanupTimers.delete(sessionId);
+            }
 
             // Send existing files in this session
             const sessionDir = path.join(SESSIONS_DIR, sessionId);
@@ -132,31 +142,22 @@ wss.on('connection', (ws) => {
                 }
             }
             ws.send(JSON.stringify({ type: 'session_files', files }));
-        } else if (msg.type === 'file_available' && sessionId) {
-            // Broadcast to other clients in the same session
-            const peers = sessions.get(sessionId);
-            if (!peers) return;
-            const broadcast = JSON.stringify({
-                type: 'file_available',
-                id: msg.id,
-                filename: msg.filename,
-                size: msg.size,
-            });
-            for (const peer of peers) {
-                if (peer !== ws && peer.readyState === 1) {
-                    peer.send(broadcast);
-                }
+
+            // Send stored UI state if available
+            const savedState = sessionUiState.get(sessionId);
+            if (savedState) {
+                ws.send(JSON.stringify(savedState));
             }
-        } else if (msg.type === 'file_removed' && sessionId) {
-            // Broadcast removal to other clients in the same session
+        } else if (msg.type === 'ui_state' && sessionId) {
+            // Store latest state
+            sessionUiState.set(sessionId, msg);
+
+            // Broadcast to ALL clients (including sender for echo-based confirmation)
             const peers = sessions.get(sessionId);
             if (!peers) return;
-            const broadcast = JSON.stringify({
-                type: 'file_removed',
-                id: msg.id,
-            });
+            const broadcast = JSON.stringify(msg);
             for (const peer of peers) {
-                if (peer !== ws && peer.readyState === 1) {
+                if (peer.readyState === 1) {
                     peer.send(broadcast);
                 }
             }
@@ -168,6 +169,16 @@ wss.on('connection', (ws) => {
             sessions.get(sessionId).delete(ws);
             if (sessions.get(sessionId).size === 0) {
                 sessions.delete(sessionId);
+                // Don't delete UI state immediately — page reloads cause a brief
+                // gap where 0 clients are connected. Clean up after 5 minutes.
+                if (sessionCleanupTimers.has(sessionId)) clearTimeout(sessionCleanupTimers.get(sessionId));
+                sessionCleanupTimers.set(sessionId, setTimeout(() => {
+                    sessionCleanupTimers.delete(sessionId);
+                    // Only delete if still no clients
+                    if (!sessions.has(sessionId) || sessions.get(sessionId).size === 0) {
+                        sessionUiState.delete(sessionId);
+                    }
+                }, 5 * 60 * 1000));
             }
         }
     });

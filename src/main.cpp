@@ -18,6 +18,7 @@
 
 #include <tev/Common.h>
 #include <tev/Image.h>
+#include <tev/ImageButton.h>
 #include <tev/ImageViewer.h>
 #include <tev/Ipc.h>
 #include <tev/ThreadPool.h>
@@ -86,6 +87,479 @@ extern "C" EMSCRIPTEN_KEEPALIVE void tev_remove_image(const char* path) {
     });
     sImageViewer->redraw();
 }
+
+static string jsonEscapeString(string_view s) {
+    string out;
+    out.reserve(s.size() + 2);
+    out += '"';
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+    out += '"';
+    return out;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE const char* tev_get_ui_state() {
+    static string buf;
+    if (!sImageViewer) {
+        buf = "{}";
+        return buf.c_str();
+    }
+
+    auto* v = sImageViewer;
+    auto* c = v->imageCanvas();
+
+    // Viewport
+    auto vc = c->viewCenter();
+    float vs = c->scale();
+
+    // Background color (straight)
+    auto bg = v->backgroundColorStraight();
+
+    // Crop
+    const auto& crop = c->crop();
+
+    // Inspection chroma
+    auto chr = v->inspectionChroma();
+
+    // Build JSON manually
+    buf.clear();
+    buf += '{';
+    buf += format("\"exposure\":{},", v->exposure());
+    buf += format("\"offset\":{},", v->offset());
+    buf += format("\"gamma\":{},", v->gamma());
+    buf += format("\"tonemap\":{},", (int)v->tonemap());
+    buf += format("\"metric\":{},", (int)v->metric());
+    buf += format("\"minFilter\":{},", (int)v->minFilter());
+    buf += format("\"magFilter\":{},", (int)v->magFilter());
+
+    buf += "\"selectedImage\":";
+    if (v->currentImage()) {
+        buf += jsonEscapeString(toString(v->currentImage()->path()));
+    } else {
+        buf += "null";
+    }
+    buf += ',';
+
+    buf += "\"referenceImage\":";
+    if (v->currentReference()) {
+        buf += jsonEscapeString(toString(v->currentReference()->path()));
+    } else {
+        buf += "null";
+    }
+    buf += ',';
+
+    buf += "\"channelGroup\":";
+    buf += jsonEscapeString(v->currentGroup());
+    buf += ',';
+
+    buf += "\"filter\":";
+    buf += jsonEscapeString(v->filter());
+    buf += ',';
+
+    buf += format("\"useRegex\":{},", v->useRegex() ? "true" : "false");
+
+    buf += "\"crop\":";
+    if (crop.has_value()) {
+        buf += format("[{},{},{},{}]", crop->min.x(), crop->min.y(), crop->max.x(), crop->max.y());
+    } else {
+        buf += "null";
+    }
+    buf += ',';
+
+    buf += format("\"bgColor\":[{},{},{},{}],", bg.r(), bg.g(), bg.b(), bg.a());
+    buf += format("\"clipToLdr\":{},", v->clipToLdr() ? "true" : "false");
+
+    buf += format("\"inspChroma\":[{},{},{},{},{},{},{},{}],",
+        chr[0][0], chr[0][1], chr[1][0], chr[1][1],
+        chr[2][0], chr[2][1], chr[3][0], chr[3][1]);
+    buf += format("\"inspTransfer\":{},", (int)v->inspectionTransfer());
+    buf += format("\"inspAdaptWp\":{},", v->inspectionAdaptWhitePoint() ? "true" : "false");
+    buf += format("\"inspPremultAlpha\":{},", v->inspectionPremultipliedAlpha() ? "true" : "false");
+
+    buf += format("\"playingBack\":{},", v->playingBack() ? "true" : "false");
+    buf += format("\"fps\":{},", v->fps());
+    buf += format("\"autoFit\":{},", v->autoFitToScreen() ? "true" : "false");
+    buf += format("\"watchFiles\":{},", v->watchFilesForChanges() ? "true" : "false");
+    buf += format("\"uiVisible\":{},", v->isUiVisible() ? "true" : "false");
+    buf += format("\"sidebarWidth\":{},", v->sidebarWidth());
+
+    // Image list (VFS paths — JS maps these to fileIds for sync)
+    buf += "\"imagePaths\":[";
+    const auto& images = v->images();
+    for (size_t i = 0; i < images.size(); ++i) {
+        if (i > 0) buf += ',';
+        buf += jsonEscapeString(toString(images[i]->path()));
+    }
+    buf += "],";
+
+    // Image captions (parallel to imagePaths — sidebar display names)
+    buf += "\"imageCaptions\":[";
+    for (size_t i = 0; i < images.size(); ++i) {
+        if (i > 0) buf += ',';
+        auto* btn = dynamic_cast<ImageButton*>(v->imageButtonContainer()->child_at(i));
+        buf += jsonEscapeString(string{btn->caption()});
+    }
+    buf += "],";
+
+    // Compute fit-to-screen scale for resolution-independent viewport sync
+    float fitScale = 1.0f;
+    if (v->currentImage()) {
+        auto imgSize = nanogui::Vector2f{v->currentImage()->displayWindow().size()} / c->pixelRatio();
+        auto canvasSize = c->size();
+        fitScale = std::min((float)canvasSize.x() / imgSize.x(), (float)canvasSize.y() / imgSize.y());
+    }
+    float relScale = (fitScale > 0.0f) ? vs / fitScale : vs;
+
+    buf += format("\"viewScale\":{},", relScale);
+    buf += format("\"viewCenter\":[{},{}]", vc.x(), vc.y());
+
+    buf += '}';
+
+    return buf.c_str();
+}
+
+// Minimal JSON value extraction helpers
+static string_view jsonFindValue(string_view json, string_view key) {
+    string needle = format("\"{}\":", key);
+    auto pos = json.find(needle);
+    if (pos == string_view::npos) return {};
+    pos += needle.size();
+    // Skip whitespace
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) ++pos;
+    if (pos >= json.size()) return {};
+
+    // Find end of value
+    if (json[pos] == '"') {
+        // String value - find closing quote (handling escapes)
+        size_t end = pos + 1;
+        while (end < json.size()) {
+            if (json[end] == '\\') { end += 2; continue; }
+            if (json[end] == '"') { return json.substr(pos, end - pos + 1); }
+            ++end;
+        }
+        return {};
+    } else if (json[pos] == '[') {
+        // Array - find matching ]
+        int depth = 1;
+        size_t end = pos + 1;
+        while (end < json.size() && depth > 0) {
+            if (json[end] == '[') ++depth;
+            else if (json[end] == ']') --depth;
+            ++end;
+        }
+        return json.substr(pos, end - pos);
+    } else if (json[pos] == '{') {
+        int depth = 1;
+        size_t end = pos + 1;
+        while (end < json.size() && depth > 0) {
+            if (json[end] == '{') ++depth;
+            else if (json[end] == '}') --depth;
+            ++end;
+        }
+        return json.substr(pos, end - pos);
+    } else {
+        // Number, bool, null
+        size_t end = pos;
+        while (end < json.size() && json[end] != ',' && json[end] != '}' && json[end] != ']') ++end;
+        return json.substr(pos, end - pos);
+    }
+}
+
+static float jsonFloat(string_view json, string_view key, float def = 0.0f) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty()) return def;
+    float result;
+    auto [ptr, ec] = from_chars(val.data(), val.data() + val.size(), result);
+    return ec == errc{} ? result : def;
+}
+
+static int jsonInt(string_view json, string_view key, int def = 0) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty()) return def;
+    int result;
+    auto [ptr, ec] = from_chars(val.data(), val.data() + val.size(), result);
+    return ec == errc{} ? result : def;
+}
+
+static bool jsonBool(string_view json, string_view key, bool def = false) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty()) return def;
+    return val == "true";
+}
+
+static string jsonString(string_view json, string_view key) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty() || val == "null" || val.size() < 2 || val[0] != '"') return {};
+    // Unescape
+    string result;
+    for (size_t i = 1; i < val.size() - 1; ++i) {
+        if (val[i] == '\\' && i + 1 < val.size() - 1) {
+            ++i;
+            switch (val[i]) {
+                case '"': result += '"'; break;
+                case '\\': result += '\\'; break;
+                case 'n': result += '\n'; break;
+                case 'r': result += '\r'; break;
+                case 't': result += '\t'; break;
+                default: result += val[i]; break;
+            }
+        } else {
+            result += val[i];
+        }
+    }
+    return result;
+}
+
+static bool jsonHasKey(string_view json, string_view key) {
+    return !jsonFindValue(json, key).empty();
+}
+
+static vector<float> jsonFloatArray(string_view json, string_view key) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty() || val[0] != '[') return {};
+    vector<float> result;
+    size_t pos = 1;
+    while (pos < val.size()) {
+        while (pos < val.size() && (val[pos] == ' ' || val[pos] == ',')) ++pos;
+        if (pos >= val.size() || val[pos] == ']') break;
+        float f;
+        auto [ptr, ec] = from_chars(val.data() + pos, val.data() + val.size(), f);
+        if (ec != errc{}) break;
+        result.push_back(f);
+        pos = ptr - val.data();
+    }
+    return result;
+}
+
+static vector<string> jsonStringArray(string_view json, string_view key) {
+    auto val = jsonFindValue(json, key);
+    if (val.empty() || val[0] != '[') return {};
+    vector<string> result;
+    size_t pos = 1;
+    while (pos < val.size()) {
+        while (pos < val.size() && (val[pos] == ' ' || val[pos] == ',')) ++pos;
+        if (pos >= val.size() || val[pos] == ']') break;
+        if (val[pos] == '"') {
+            // Find closing quote (handling escapes)
+            size_t end = pos + 1;
+            while (end < val.size()) {
+                if (val[end] == '\\') { end += 2; continue; }
+                if (val[end] == '"') break;
+                ++end;
+            }
+            // Use jsonString-style unescaping on the substring
+            string s;
+            for (size_t i = pos + 1; i < end; ++i) {
+                if (val[i] == '\\' && i + 1 < end) {
+                    ++i;
+                    switch (val[i]) {
+                        case '"': s += '"'; break;
+                        case '\\': s += '\\'; break;
+                        case 'n': s += '\n'; break;
+                        case 't': s += '\t'; break;
+                        default: s += val[i]; break;
+                    }
+                } else {
+                    s += val[i];
+                }
+            }
+            result.push_back(std::move(s));
+            pos = end + 1;
+        } else {
+            break; // unexpected token
+        }
+    }
+    return result;
+}
+
+extern "C" EMSCRIPTEN_KEEPALIVE void tev_apply_ui_state(const char* jsonStr) {
+    if (!sImageViewer) return;
+
+    auto* v = sImageViewer;
+    string_view j{jsonStr};
+
+    // Select image and reference (matched by VFS path, which is unique per image)
+    auto selPath = jsonString(j, "selectedImage");
+    auto refPath = jsonString(j, "referenceImage");
+
+    if (!selPath.empty()) {
+        if (!v->currentImage() || toString(v->currentImage()->path()) != selPath) {
+            for (const auto& img : v->images()) {
+                if (toString(img->path()) == selPath) {
+                    v->selectImage(img);
+                    break;
+                }
+            }
+        }
+    } else {
+        v->selectImage(nullptr);
+    }
+
+    if (!refPath.empty()) {
+        if (!v->currentReference() || toString(v->currentReference()->path()) != refPath) {
+            for (const auto& img : v->images()) {
+                if (toString(img->path()) == refPath) {
+                    v->selectReference(img);
+                    break;
+                }
+            }
+        }
+    } else {
+        v->selectReference(nullptr);
+    }
+
+    // Channel group
+    auto grp = jsonString(j, "channelGroup");
+    if (!grp.empty() && grp != v->currentGroup()) {
+        v->selectGroup(grp);
+    }
+
+    // Rendering params
+    float exposure = jsonFloat(j, "exposure");
+    if (exposure != v->exposure()) v->setExposure(exposure);
+
+    float offset = jsonFloat(j, "offset");
+    if (offset != v->offset()) v->setOffset(offset);
+
+    float gamma = jsonFloat(j, "gamma", 2.2f);
+    if (gamma != v->gamma()) v->setGamma(gamma);
+
+    int tonemap = jsonInt(j, "tonemap");
+    if ((ETonemap)tonemap != v->tonemap()) v->setTonemap((ETonemap)tonemap);
+
+    int metric = jsonInt(j, "metric", 1);
+    if ((EMetric)metric != v->metric()) v->setMetric((EMetric)metric);
+
+    int minF = jsonInt(j, "minFilter", 2);
+    if ((EInterpolationMode)minF != v->minFilter()) v->setMinFilter((EInterpolationMode)minF);
+
+    int magF = jsonInt(j, "magFilter");
+    if ((EInterpolationMode)magF != v->magFilter()) v->setMagFilter((EInterpolationMode)magF);
+
+    // Crop
+    auto cropArr = jsonFloatArray(j, "crop");
+    auto* canvas = v->imageCanvas();
+    if (cropArr.size() == 4) {
+        Box2i crop = {{(int)cropArr[0], (int)cropArr[1]}, {(int)cropArr[2], (int)cropArr[3]}};
+        canvas->setCrop(crop);
+    } else {
+        canvas->setCrop(nullopt);
+    }
+
+    // Background color
+    auto bgArr = jsonFloatArray(j, "bgColor");
+    if (bgArr.size() == 4) {
+        v->setBackgroundColorStraight(nanogui::Color{bgArr[0], bgArr[1], bgArr[2], bgArr[3]});
+    }
+
+    // Clip to LDR
+    bool clip = jsonBool(j, "clipToLdr");
+    if (clip != v->clipToLdr()) {
+        canvas->setClipToLdr(clip);
+    }
+
+    // Inspection params
+    auto chrArr = jsonFloatArray(j, "inspChroma");
+    if (chrArr.size() == 8) {
+        chroma_t chr;
+        chr[0] = {chrArr[0], chrArr[1]};
+        chr[1] = {chrArr[2], chrArr[3]};
+        chr[2] = {chrArr[4], chrArr[5]};
+        chr[3] = {chrArr[6], chrArr[7]};
+        v->setInspectionChroma(chr);
+    }
+
+    if (jsonHasKey(j, "inspTransfer")) {
+        v->setInspectionTransfer((ituth273::ETransfer)jsonInt(j, "inspTransfer"));
+    }
+    if (jsonHasKey(j, "inspAdaptWp")) {
+        v->setInspectionAdaptWhitePoint(jsonBool(j, "inspAdaptWp"));
+    }
+    if (jsonHasKey(j, "inspPremultAlpha")) {
+        v->setInspectionPremultipliedAlpha(jsonBool(j, "inspPremultAlpha", true));
+    }
+
+    // Playback
+    v->setPlayingBack(jsonBool(j, "playingBack"));
+    int fps = jsonInt(j, "fps", 24);
+    if (fps != v->fps()) v->setFps(fps);
+
+    // Filter
+    auto filterStr = jsonString(j, "filter");
+    if (filterStr != v->filter()) v->setFilter(filterStr);
+    v->setUseRegex(jsonBool(j, "useRegex"));
+
+    // UI settings
+    v->setAutoFitToScreen(jsonBool(j, "autoFit"));
+    v->setWatchFilesForChanges(jsonBool(j, "watchFiles"));
+
+    bool uiVis = jsonBool(j, "uiVisible", true);
+    if (uiVis != v->isUiVisible()) v->setUiVisible(uiVis);
+
+    int sbW = jsonInt(j, "sidebarWidth", 230);
+    if (sbW != v->sidebarWidth()) v->setSidebarWidth(sbW);
+
+    // Viewport (viewScale is relative to fit-to-screen scale for resolution independence)
+    float relViewScale = jsonFloat(j, "viewScale", 1.0f);
+    auto vcArr = jsonFloatArray(j, "viewCenter");
+    if (vcArr.size() == 2) {
+        float fitScale = 1.0f;
+        if (v->currentImage()) {
+            auto imgSize = nanogui::Vector2f{v->currentImage()->displayWindow().size()} / canvas->pixelRatio();
+            auto canvasSize = canvas->size();
+            fitScale = std::min((float)canvasSize.x() / imgSize.x(), (float)canvasSize.y() / imgSize.y());
+        }
+        float absScale = relViewScale * fitScale;
+        canvas->setViewState(absScale, nanogui::Vector2f{vcArr[0], vcArr[1]});
+    }
+
+    // Reorder images to match remote state
+    auto remotePaths = jsonStringArray(j, "imagePaths");
+    if (!remotePaths.empty() && remotePaths.size() == v->images().size()) {
+        for (size_t targetIdx = 0; targetIdx < remotePaths.size(); ++targetIdx) {
+            // Find where this image currently is
+            const auto& imgs = v->images();
+            size_t currentIdx = targetIdx;
+            for (size_t k = targetIdx; k < imgs.size(); ++k) {
+                if (toString(imgs[k]->path()) == remotePaths[targetIdx]) {
+                    currentIdx = k;
+                    break;
+                }
+            }
+            if (currentIdx != targetIdx) {
+                v->moveImageInList(currentIdx, targetIdx);
+            }
+        }
+    }
+
+    // Apply captions — match by path so it works even when not all images are loaded yet
+    auto remoteCaptions = jsonStringArray(j, "imageCaptions");
+    if (!remoteCaptions.empty() && remoteCaptions.size() == remotePaths.size()) {
+        const auto& imgs = v->images();
+        for (size_t i = 0; i < remotePaths.size(); ++i) {
+            for (size_t k = 0; k < imgs.size(); ++k) {
+                if (toString(imgs[k]->path()) == remotePaths[i]) {
+                    auto* btn = dynamic_cast<ImageButton*>(v->imageButtonContainer()->child_at(k));
+                    if (btn && string{btn->caption()} != remoteCaptions[i]) {
+                        btn->setCaption(remoteCaptions[i]);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    v->redraw();
+}
+
 #endif
 static atomic<bool> imageViewerIsReady = false;
 

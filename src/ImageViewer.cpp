@@ -1524,6 +1524,20 @@ void ImageViewer::insertImage(shared_ptr<Image> image, size_t index, bool shallS
         button->setTransferProgress(pendingIt->second.progress, pendingIt->second.isUpload);
         mPendingTransfers.erase(pendingIt);
     }
+
+    // Re-apply pending remote state (captions, selection, order) now that a new image is available.
+    // Uses setTimeout(0) so it runs after the current tryPop() batch finishes adding all images.
+    EM_ASM({
+        if (typeof TevSync !== 'undefined' && TevSync.pendingRemoteState) {
+            if (TevSync._reapplyTimer) clearTimeout(TevSync._reapplyTimer);
+            TevSync._reapplyTimer = setTimeout(function() {
+                TevSync._reapplyTimer = null;
+                if (TevSync.pendingRemoteState) {
+                    TevSync.applyRemoteState(TevSync.pendingRemoteState);
+                }
+            }, 0);
+        }
+    });
 #endif
 
     mShouldFooterBeVisible |= image->channelGroups().size() > 1;
@@ -2200,6 +2214,8 @@ void ImageViewer::setPlayingBack(bool value) {
     mLastPlaybackFrameTime = chrono::steady_clock::now();
     set_run_mode(value ? RunMode::VSync : RunMode::Lazy);
 }
+
+string ImageViewer::filter() const { return string{mFilter->value()}; }
 
 bool ImageViewer::setFilter(string_view filter) {
     mFilter->set_value(filter);

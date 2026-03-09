@@ -58,11 +58,7 @@
                 location.hash = '#' + id;
             }
             window.tevSessionId = id;
-
-            /* Reload when the hash changes (e.g. user pastes a new session URL) */
-            window.addEventListener('hashchange', function() {
-                location.reload();
-            });
+            window.addEventListener('hashchange', function() { location.reload(); });
         })();
 
         /* ── Helpers ─────────────────────────────────────────── */
@@ -104,17 +100,29 @@
         var TevSync = {
             ws: null,
             sessionId: window.tevSessionId,
+
+            /* File transfer */
             uploadQueue: [],
             downloadQueue: [],
             activeUploads: 0,
             activeDownloads: 0,
             activeDownloadIds: new Set(),
-            selectedFileId: null,
             knownFileIds: new Set(),
             fileIdToVfsPath: {},
             vfsPathToFileId: {},
+            selectedFileId: null,
             MAX_CONCURRENT: 2,
             reconnectDelay: 1000,
+
+            /* State sync */
+            inflightStateId: null,
+            lastStateJson: null,
+            stateSendTimer: null,
+            statePoller: null,
+            suppressUntil: 0,
+            pendingRemoteState: null,
+            DEBOUNCE_MS: 250,
+            STATE_POLL_MS: 100,
 
             connect: function() {
                 var self = this;
@@ -123,6 +131,8 @@
 
                 self.ws.onopen = function() {
                     self.reconnectDelay = 1000;
+                    self.inflightStateId = null;
+                    self.lastStateJson = null;
                     self.ws.send(JSON.stringify({
                         type: 'join',
                         sessionId: self.sessionId
@@ -133,33 +143,11 @@
                     var msg;
                     try { msg = JSON.parse(ev.data); } catch (_) { return; }
 
-                    if (msg.type === 'session_files') {
-                        msg.files.forEach(function(f) {
-                            if (!self.knownFileIds.has(f.id)) {
-                                self.downloadQueue.push({ id: f.id, filename: f.filename, size: f.size });
-                            }
-                        });
-                        self.processDownloadQueue();
-                    } else if (msg.type === 'file_available') {
-                        if (!self.knownFileIds.has(msg.id)) {
-                            self.downloadQueue.push({ id: msg.id, filename: msg.filename, size: msg.size });
-                            self.processDownloadQueue();
-                        }
-                    } else if (msg.type === 'file_removed') {
-                        self.knownFileIds.delete(msg.id);
-                        /* Remove from download queue if pending */
-                        self.downloadQueue = self.downloadQueue.filter(function(item) {
-                            return item.id !== msg.id;
-                        });
-                        /* Tell C++ to close the image and clean up VFS */
-                        var vfsPath = self.fileIdToVfsPath[msg.id];
-                        if (vfsPath) {
-                            Module.ccall('tev_remove_image', null, ['string'], [vfsPath]);
-                            try { FS.unlink(vfsPath); } catch (_) {}
-                            delete self.vfsPathToFileId[vfsPath];
-                            delete self.fileIdToVfsPath[msg.id];
-                        }
+                    if (msg.type === 'ui_state') {
+                        self.handleRemoteState(msg);
                     }
+                    /* session_files no longer drives downloads —
+                       file reconciliation is handled by ui_state */
                 };
 
                 self.ws.onclose = function() {
@@ -169,10 +157,190 @@
                     }, self.reconnectDelay);
                 };
 
-                self.ws.onerror = function() {
-                    self.ws.close();
-                };
+                self.ws.onerror = function() { self.ws.close(); };
             },
+
+            /* ── State sync methods ──────────────────────────────── */
+
+            handleRemoteState: function(msg) {
+                /* Echo of our own state — just clear inflight */
+                if (msg.stateId && msg.stateId === this.inflightStateId) {
+                    this.inflightStateId = null;
+                    return;
+                }
+                /* Waiting for our echo — ignore remote states */
+                if (this.inflightStateId !== null) return;
+                if (!msg.state) return;
+
+                var state = msg.state;
+                this.pendingRemoteState = state;
+                this.reconcileFiles(state.files || []);
+                this.applyRemoteState(state);
+            },
+
+            applyRemoteState: function(state) {
+                var self = this;
+                var stateForCpp = {};
+                for (var key in state) {
+                    if (key !== 'files') stateForCpp[key] = state[key];
+                }
+
+                /* Reconstruct imagePaths from files using local VFS paths */
+                if (state.files) {
+                    var localPaths = [];
+                    state.files.forEach(function(f) {
+                        var localPath = self.fileIdToVfsPath[f.id];
+                        if (localPath) localPaths.push(localPath);
+                    });
+                    stateForCpp.imagePaths = localPaths;
+                }
+
+                /* Map selectedImage/referenceImage file IDs back to local VFS paths */
+                if (stateForCpp.selectedImage) {
+                    var localPath = self.fileIdToVfsPath[stateForCpp.selectedImage];
+                    stateForCpp.selectedImage = localPath || null;
+                }
+                if (stateForCpp.referenceImage) {
+                    var localPath = self.fileIdToVfsPath[stateForCpp.referenceImage];
+                    stateForCpp.referenceImage = localPath || null;
+                }
+
+                Module.ccall('tev_apply_ui_state', null, ['string'],
+                    [JSON.stringify(stateForCpp)]);
+                this.suppressUntil = Date.now() + 500;
+                this.lastStateJson = null;
+            },
+
+            reconcileFiles: function(remoteFiles) {
+                var self = this;
+
+                /* Build set of remote file IDs */
+                var remoteFileIds = new Set();
+                remoteFiles.forEach(function(f) { remoteFileIds.add(f.id); });
+
+                /* Queue downloads for files we don't have locally */
+                remoteFiles.forEach(function(f) {
+                    if (!self.knownFileIds.has(f.id) && !self.activeDownloadIds.has(f.id)) {
+                        var inQueue = self.downloadQueue.some(function(d) {
+                            return d.id === f.id;
+                        });
+                        if (!inQueue) {
+                            var filename = f.name.split('/').pop();
+                            self.downloadQueue.push({ id: f.id, filename: filename });
+                        }
+                    }
+                });
+                self.processDownloadQueue();
+
+                /* Remove files loaded locally but absent from remote state.
+                   tev_remove_image -> removeImageByPath suppresses tevOnImageRemoved,
+                   so we clean up JS-side mappings here directly. */
+                var toRemove = [];
+                self.knownFileIds.forEach(function(id) {
+                    if (!remoteFileIds.has(id)) toRemove.push(id);
+                });
+                toRemove.forEach(function(id) {
+                    var vfsPath = self.fileIdToVfsPath[id];
+                    if (vfsPath) {
+                        Module.ccall('tev_remove_image', null, ['string'], [vfsPath]);
+                        try { FS.unlink(vfsPath); } catch (_) {}
+                        delete self.vfsPathToFileId[vfsPath];
+                        delete self.fileIdToVfsPath[id];
+                    }
+                    self.knownFileIds.delete(id);
+                    self.downloadQueue = self.downloadQueue.filter(function(d) {
+                        return d.id !== id;
+                    });
+                });
+            },
+
+            startStateSync: function() {
+                var self = this;
+                self.statePoller = setInterval(function() {
+                    if (!self.ws || self.ws.readyState !== 1) return;
+
+                    /* Don't broadcast state while downloads are in progress —
+                       local state is incomplete and would overwrite correct
+                       server state (e.g. captions, selection) with defaults */
+                    if (self.activeDownloads > 0 || self.downloadQueue.length > 0) return;
+
+                    var stateJson = Module.ccall('tev_get_ui_state', 'string', [], []);
+
+                    /* During suppression, just keep baseline updated */
+                    if (Date.now() < self.suppressUntil) {
+                        self.lastStateJson = stateJson;
+                        return;
+                    }
+
+                    if (self.lastStateJson === null) {
+                        /* First read — record baseline, don't send */
+                        self.lastStateJson = stateJson;
+                        return;
+                    }
+
+                    if (stateJson === self.lastStateJson) return;
+
+                    /* State changed — schedule debounced send */
+                    if (self.inflightStateId !== null) return;
+
+                    /* Only reschedule the debounce timer if the state is still
+                       actively changing (e.g. slider drag). If it stabilized
+                       since the last poll, let the existing timer fire. */
+                    if (stateJson !== self._prevPollState) {
+                        if (self.stateSendTimer) clearTimeout(self.stateSendTimer);
+                        self.stateSendTimer = setTimeout(function() {
+                            self.stateSendTimer = null;
+                            self.sendState();
+                        }, self.DEBOUNCE_MS);
+                    }
+                    self._prevPollState = stateJson;
+                }, self.STATE_POLL_MS);
+            },
+
+            sendState: function() {
+                var self = this;
+                if (!self.ws || self.ws.readyState !== 1) return;
+
+                var stateJson = Module.ccall('tev_get_ui_state', 'string', [], []);
+                var state;
+                try { state = JSON.parse(stateJson); } catch (_) { return; }
+
+                /* Transform imagePaths into files array with server IDs */
+                var files = [];
+                (state.imagePaths || []).forEach(function(p) {
+                    var id = self.vfsPathToFileId[p];
+                    if (id) files.push({ name: p, id: id });
+                });
+                delete state.imagePaths;
+                state.files = files;
+
+                /* Map selectedImage/referenceImage VFS paths to file IDs */
+                if (state.selectedImage) {
+                    var selId = self.vfsPathToFileId[state.selectedImage];
+                    state.selectedImage = selId || null;
+                }
+                if (state.referenceImage) {
+                    var refId = self.vfsPathToFileId[state.referenceImage];
+                    state.referenceImage = refId || null;
+                }
+
+                var stateId = generateFileId();
+                self.inflightStateId = stateId;
+                self.lastStateJson = stateJson;
+                /* Only clear pending remote state once all downloads are done —
+                   otherwise captions/selection from the remote state are lost */
+                if (self.activeDownloads === 0 && self.downloadQueue.length === 0) {
+                    self.pendingRemoteState = null;
+                }
+
+                self.ws.send(JSON.stringify({
+                    type: 'ui_state',
+                    stateId: stateId,
+                    state: state
+                }));
+            },
+
+            /* ── File upload / download ──────────────────────────── */
 
             enqueueUpload: function(id, filename, vfsPath, data) {
                 this.knownFileIds.add(id);
@@ -184,9 +352,8 @@
 
             processUploadQueue: function() {
                 while (this.activeUploads < this.MAX_CONCURRENT && this.uploadQueue.length > 0) {
-                    var item = this.uploadQueue.shift();
                     this.activeUploads++;
-                    this.uploadFile(item);
+                    this.uploadFile(this.uploadQueue.shift());
                 }
             },
 
@@ -201,10 +368,9 @@
 
                 xhr.upload.onprogress = function(e) {
                     if (e.lengthComputable) {
-                        var pct = Math.round((e.loaded / e.total) * 100);
                         Module.ccall('tev_set_transfer_progress', null,
                             ['string', 'number', 'number'],
-                            [item.vfsPath, pct, 1]);
+                            [item.vfsPath, Math.round((e.loaded / e.total) * 100), 1]);
                     }
                 };
 
@@ -212,16 +378,7 @@
                     Module.ccall('tev_clear_transfer_progress', null,
                         ['string'], [item.vfsPath]);
                     self.activeUploads--;
-
-                    if (xhr.status === 200 && self.ws && self.ws.readyState === 1) {
-                        self.ws.send(JSON.stringify({
-                            type: 'file_available',
-                            id: item.id,
-                            filename: item.filename,
-                            size: item.data.byteLength
-                        }));
-                    }
-
+                    /* No file_available WS message — state sync propagates the new file */
                     self.processUploadQueue();
                 };
 
@@ -237,7 +394,6 @@
             },
 
             processDownloadQueue: function() {
-                // Sort: currently-selected image first
                 if (this.selectedFileId) {
                     var sel = this.selectedFileId;
                     this.downloadQueue.sort(function(a, b) {
@@ -246,7 +402,6 @@
                 }
 
                 while (this.activeDownloads < this.MAX_CONCURRENT && this.downloadQueue.length > 0) {
-                    // Skip items already being downloaded
                     var idx = -1;
                     for (var i = 0; i < this.downloadQueue.length; i++) {
                         if (!this.activeDownloadIds.has(this.downloadQueue[i].id)) {
@@ -276,10 +431,9 @@
 
                 xhr.onprogress = function(e) {
                     if (e.lengthComputable) {
-                        var pct = Math.round((e.loaded / e.total) * 100);
                         Module.ccall('tev_set_transfer_progress', null,
                             ['string', 'number', 'number'],
-                            [vfsPath, pct, 0]);
+                            [vfsPath, Math.round((e.loaded / e.total) * 100), 0]);
                     }
                 };
 
@@ -296,11 +450,18 @@
                         self.vfsPathToFileId[vfsPath] = item.id;
 
                         Module.ccall('tev_drop_files', null, ['string'], [vfsPath]);
-                        // Clear progress shortly after — give C++ time to create the button
                         setTimeout(function() {
                             Module.ccall('tev_clear_transfer_progress', null,
                                 ['string'], [vfsPath]);
                         }, 500);
+
+                        /* Re-apply pending remote state so image selection/reference
+                           work correctly after the download completes */
+                        if (self.pendingRemoteState) {
+                            setTimeout(function() {
+                                self.applyRemoteState(self.pendingRemoteState);
+                            }, 200);
+                        }
                     } else {
                         Module.ccall('tev_clear_transfer_progress', null,
                             ['string'], [vfsPath]);
@@ -322,46 +483,42 @@
             }
         };
 
-        /* Called from C++ EM_ASM when the selected image changes (receives full VFS path) */
+        /* ── C++ callbacks ───────────────────────────────────── */
+
+        /* Called from C++ when the selected image changes */
         window.tevOnImageSelected = function(vfsPath) {
             var id = TevSync.vfsPathToFileId[vfsPath];
             TevSync.selectedFileId = id || null;
             TevSync.processDownloadQueue();
         };
 
-        /* Called from C++ EM_ASM when an image is closed/removed (receives full VFS path) */
+        /* Called from C++ when user closes an image through the tev UI.
+           NOT called for tev_remove_image (removeImageByPath suppresses it). */
         window.tevOnImageRemoved = function(vfsPath) {
             var id = TevSync.vfsPathToFileId[vfsPath];
-            if (!id) return; /* Not a synced file */
+            if (!id) return;
+
             TevSync.knownFileIds.delete(id);
             delete TevSync.fileIdToVfsPath[id];
             delete TevSync.vfsPathToFileId[vfsPath];
 
-            /* Delete from server */
+            /* Delete file from server */
             var xhr = new XMLHttpRequest();
             var url = '/api/sessions/' + encodeURIComponent(TevSync.sessionId) +
                       '/files/' + encodeURIComponent(id);
             xhr.open('DELETE', url);
             xhr.send();
-
-            /* Notify peers */
-            if (TevSync.ws && TevSync.ws.readyState === 1) {
-                TevSync.ws.send(JSON.stringify({
-                    type: 'file_removed',
-                    id: id
-                }));
-            }
+            /* State sync will propagate the removal — no WS message needed */
         };
 
-        /* Start sync after WASM is ready */
+        /* ── Start sync after WASM is ready ──────────────────── */
         Module.postRun = Module.postRun || [];
         Module.postRun.push(function() {
             TevSync.connect();
+            TevSync.startStateSync();
         });
 
         /* ── Custom drop handler ──────────────────────────────── */
-        /* Each dropped file gets a unique ID subdirectory in the VFS,
-           avoiding collisions even for same-named files. */
         (function() {
             var canvas = document.getElementById('canvas');
             var DROP_DIR = '/.glfw_dropped_files';
@@ -377,7 +534,6 @@
                 var files = e.dataTransfer ? e.dataTransfer.files : null;
                 if (!files || !files.length) return;
 
-                /* Each file gets a unique ID subdirectory */
                 var entries = [];
                 for (var i = 0; i < files.length; i++) {
                     var origName = files[i].name.replace(/\//g, '_');
@@ -386,7 +542,6 @@
                                    path: DROP_DIR + '/' + id + '/' + origName });
                 }
 
-                /* Read all files, write to VFS, then call C++ */
                 var pending = entries.length;
                 var paths = entries.map(function(e) { return e.path; });
 
@@ -400,8 +555,6 @@
                         if (reader.readyState === 2) {
                             var data = new Uint8Array(reader.result);
                             FS.writeFile(entry.path, data);
-
-                            /* Enqueue upload to collaboration server */
                             TevSync.enqueueUpload(entry.id, entry.filename, entry.path, reader.result);
                         }
                         if (--pending === 0) {

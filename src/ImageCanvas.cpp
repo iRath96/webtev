@@ -540,6 +540,37 @@ void ImageCanvas::draw(NVGcontext* ctx) {
 
 void ImageCanvas::translate(Vector2f amount) { mTransform = Matrix3f::translate(amount) * mTransform; }
 
+Vector2f ImageCanvas::viewCenter() const {
+    if (!mImage) {
+        return Vector2f{0.0f};
+    }
+
+    auto t2n = const_cast<ImageCanvas*>(this)->textureToNanogui(mImage.get());
+    return inverse(t2n) * (0.5f * Vector2f{m_size});
+}
+
+void ImageCanvas::setViewState(float s, Vector2f imageCenter) {
+    if (!mImage) {
+        mTransform = Matrix3f::scale(Vector2f{s});
+        return;
+    }
+
+    // Compute where imageCenter maps in pre-transform space:
+    // textureToNanogui = translate(0.5*canvasSize) * mTransform * P
+    // where P = scale(1/pixelRatio) * translate(-0.5*imageSize + centerOffset + pixelOffset)
+    // We want: textureToNanogui * imageCenter = 0.5 * canvasSize (center of viewport)
+    // So: mTransform * P * imageCenter = (0, 0)
+    // If mTransform = [s 0 tx; 0 s ty; 0 0 1], then tx = -s*Q.x, ty = -s*Q.y where Q = P*imageCenter
+    Vector2f offset = -0.5f * Vector2f{mImage->size()} + mImage->centerDisplayOffset(mImage->displayWindow()) + pixelOffset(mImage->size());
+    Vector2f Q = (imageCenter + offset) / mPixelRatio;
+
+    mTransform = Matrix3f::scale(Vector2f{1.0f});
+    mTransform.m[0][0] = s;
+    mTransform.m[1][1] = s;
+    mTransform.m[2][0] = -s * Q.x();
+    mTransform.m[2][1] = -s * Q.y();
+}
+
 void ImageCanvas::scale(float amount, Vector2f origin) {
     static const double BASE_SCALE = sqrt(sqrt(sqrt(2.0)));
     const float scaleFactor = (float)pow(BASE_SCALE, (double)amount);

@@ -158,6 +158,7 @@ public:
     bool playingBack() const;
     void setPlayingBack(bool value);
 
+    std::string filter() const;
     bool setFilter(std::string_view filter);
 
     void setFps(int value);
@@ -225,6 +226,27 @@ public:
 
     bool inspectionPremultipliedAlpha() const;
     void setInspectionPremultipliedAlpha(bool value);
+
+    const std::vector<std::shared_ptr<Image>>& images() const { return mImages; }
+    const std::string& currentGroup() const { return mCurrentGroup; }
+    int sidebarWidth() const { return mSidebar->fixed_width(); }
+    int fps() const { return mFpsTextBox->value(); }
+    bool clipToLdr() const { return mClipToLdrButton->pushed(); }
+    ImageCanvas* imageCanvas() const { return mImageCanvas; }
+    nanogui::Widget* imageButtonContainer() const { return mImageButtonContainer; }
+    std::shared_ptr<Image> currentImage() const { return mCurrentImage; }
+    std::shared_ptr<Image> currentReference() const { return mCurrentReference; }
+
+    nanogui::Color backgroundColorStraight() const {
+        auto col = mBackgroundColorWheel->color();
+        float a = mBackgroundAlphaSlider->value();
+        return nanogui::Color{col.r(), col.g(), col.b(), a};
+    }
+
+    void setSidebarWidth(int width) {
+        mSidebar->set_fixed_width(width);
+        requestLayoutUpdate();
+    }
 
 private:
     void updateFilter();
