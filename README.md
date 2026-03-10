@@ -1,10 +1,10 @@
 # webtev - A collaborative tev that runs in the browser
 
 > [!NOTE]
-> Disclaimer: Claude Opus 4.6 wrote this app.
+> Disclaimer: Claude Opus 4.6 created this fork.
 
 This is an [emscripten](https://emscripten.org) port of [tev](https://github.com/tom94/tev) that has extra collaborative features baked in.
-You can think of it as screensharing tev, but without the annoying downsides of screensharing -- no bluriness, no lag, and everyone connected gets to interact with tev!
+You can think of it as screensharing tev, but without the annoying downsides of screensharing—no bluriness, no lag, and everyone connected gets to interact with tev!
 All EXRs you drag-and-drop in will automatically open in all browsers connected to the same URL, and UI state (such as zoom, error metrics, etc) is automatically synced across all clients.
 
 ## Build instructions
