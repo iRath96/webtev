@@ -1,3 +1,23 @@
+# webtev - A collaborative tev that runs in the browser
+
+> [!NOTE]
+> Disclaimer: Claude Opus 4.6 wrote this app.
+
+This is an [emscripten](https://emscripten.org) port of [tev](https://github.com/tom94/tev) that has extra collaborative features baked in.
+You can think of it as screensharing tev, but without the annoying downsides of screensharing -- no bluriness, no lag, and everyone connected gets to interact with tev!
+All EXRs you drag-and-drop in will automatically open in all browsers connected to the same URL, and UI state (such as zoom, error metrics, etc) is automatically synced across all clients.
+
+## Build instructions
+```bash
+emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
+cmake --build build-web -j
+```
+
+## Run instructions
+```bash
+node server/server.js
+```
+
 # tev — The EDR Viewer &nbsp;&nbsp; ![](https://github.com/tom94/tev/workflows/CI/badge.svg)
 
 High dynamic range (HDR) image viewer for people who care about colors.
